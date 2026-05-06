@@ -2,6 +2,7 @@ package com.my.televip.features.otherFeatures;
 
 import android.content.Context;
 
+import com.my.televip.ClientChecker;
 import com.my.televip.Utils;
 import com.my.televip.base.AbstractMethodHook;
 import com.my.televip.hooks.HMethod;
@@ -13,8 +14,9 @@ import de.robv.android.xposed.XposedHelpers;
 public class FeatureInitializer {
 
     public static void init(Context context) {
-        try {
+        if (ClientChecker.check(ClientChecker.ClientType.TelegramPlus)) return;
 
+        try {
             if (!FeatureStateManager.isChatEnabled() || !FeatureStateManager.isProfileEnabled()) {
 
                 Class<?> actionBarClass = XposedHelpers.findClassIfExists(

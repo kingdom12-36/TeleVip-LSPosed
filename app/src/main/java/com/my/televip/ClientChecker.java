@@ -1,9 +1,11 @@
 package com.my.televip;
 
+import java.util.Arrays;
+
 public class ClientChecker {
     public static boolean check(ClientType client, String pkgName)
     {
-        return client.getPackageName().equals(pkgName);
+        return Arrays.asList(client.getPackageNames()).contains(pkgName);
     }
 
     public static boolean check(ClientType client)
@@ -27,22 +29,29 @@ public class ClientChecker {
         forkgramBeta("org.forkclient.messenger.beta", com.my.televip.Clients.forkgramBeta.class),
         Telegraph("ir.ilmili.telegraph", com.my.televip.Clients.Telegraph.class),
         Telega("ru.dahl.messenger", com.my.televip.Clients.Telega.class),
-        Momogram("nekox.messenger.broken", com.my.televip.Clients.Momogram.class);
+        Momogram(new String[]{"nekox.messenger.broken", "momo.gram"}, com.my.televip.Clients.Momogram.class);
 
-        private final String packageName;
+        private final String[] packageNames;
         private final Class<?> resolverClass;
 
         ClientType(String packageName, Class<?> resolverClass) {
-            this.packageName = packageName;
+            this.packageNames = new String[]{packageName};
             this.resolverClass = resolverClass;
         }
 
-        public String getPackageName() { return packageName; }
+        ClientType(String[] packageNames, Class<?> resolverClass) {
+            this.packageNames = packageNames;
+            this.resolverClass = resolverClass;
+        }
+
+        public String[] getPackageNames() { return packageNames; }
         public Class<?> getResolverClass() { return resolverClass; }
 
         public static ClientType fromPackage(String pkg){
-            for (ClientType type: ClientType.values()) {
-                if (type.getPackageName().equals(pkg)) return type;
+            for (ClientType type: ClientType.values()){
+                for (String name: type.getPackageNames()){
+                    if (name.equals(pkg)) return type;
+                }
             }
             return null;
         }

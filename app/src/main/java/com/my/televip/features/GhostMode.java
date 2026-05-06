@@ -1,14 +1,13 @@
 package com.my.televip.features;
 
-import com.my.televip.Class.ClassNames;
 import com.my.televip.Class.ClassLoad;
+import com.my.televip.Class.ClassNames;
 import com.my.televip.ClientChecker;
 import com.my.televip.Configs.ConfigManager;
-import com.my.televip.Utils;
 import com.my.televip.base.AbstractMethodHook;
 import com.my.televip.hooks.HMethod;
-import com.my.televip.obfuscate.AutomationResolver;
 import com.my.televip.logging.Logger;
+import com.my.televip.obfuscate.AutomationResolver;
 
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
@@ -39,8 +38,6 @@ public class GhostMode {
                                             if (ClassLoad.getClass(ClassNames.TL_ACCOUNT_UPDATE_STATUS).isInstance(object)) {
                                                 XposedHelpers.setBooleanField(object, AutomationResolver.resolve("TL_account$updateStatus", "offline", AutomationResolver.ResolverType.Field), true);
                                             }
-                                        } else {
-                                            Logger.w("Not found TL_account_updateStatus, " + Utils.issue);
                                         }
                                     }
 
@@ -54,10 +51,12 @@ public class GhostMode {
                                         param.setResult(null);
                                         return;
                                     }
+
                                     if (ConfigManager.hideStoryView.isEnable() && HideStoryRead.isReadStoriesRequest(object)) {
                                         param.setResult(null);
                                         return;
                                     }
+
                                     if (ConfigManager.hideProxySponsor.isEnable() && HideProxySponsor.isPromoDataRequest(object)) {
                                         param.setResult(null);
                                         return;
