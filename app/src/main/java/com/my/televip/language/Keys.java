@@ -83,4 +83,6 @@ public class Keys {
     public static final String TodayAt = "TodayAt";
     public static final String YesterdayAt = "YesterdayAt";
     public static final String QuranNotification = "QuranNotification";
+    public static final String BypassSlowMode = "BypassSlowMode";
+    public static final String BypassSlowModeInfo = "BypassSlowModeInfo";
 }
