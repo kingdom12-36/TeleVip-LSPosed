@@ -4,6 +4,7 @@ import android.content.Context;
 
 import com.my.televip.ClientChecker;
 import com.my.televip.Clients.Telegraph;
+import com.my.televip.features.BypassSlowMode;
 import com.my.televip.features.DisableChannelSwipeBack;
 import com.my.televip.features.DisableNumberRounding;
 import com.my.televip.features.DisableProfileSwipeBack;
@@ -62,6 +63,7 @@ public class ConfigManager {
     public static ConfigItem showDeletedMessages;
     public static ConfigItem showMessageId;
     public static ConfigItem saveEditsHistory;
+    public static ConfigItem bypassSlowMode;
 
     // Connections
     public static ConfigItem connections;
@@ -152,6 +154,9 @@ public class ConfigManager {
 
             saveEditsHistory = new ConfigItem(ConfigItem.SWITCH, Keys.SaveEditsHistory, ConfigPreferences.getBoolean(Keys.SaveEditsHistory), () -> SaveEditsHistory.init(context));
             items.add(saveEditsHistory);
+
+            bypassSlowMode = new ConfigItem(ConfigItem.SWITCH, Keys.BypassSlowMode, ConfigPreferences.getBoolean(Keys.BypassSlowMode), BypassSlowMode::init);
+            items.add(bypassSlowMode);
 
             items.add(shadows);
 
