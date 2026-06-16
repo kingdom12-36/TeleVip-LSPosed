@@ -42,7 +42,8 @@ tasks.register("copyLargestDexAsJava") {
     dependsOn(":settingsadapter:assembleDebug")
 
     doLast {
-        def apkFile = fileTree("$rootDir/settingsadapter/build/intermediates/apk/debug")
+        // Use outputs path (compatible with AGP 7+/8+)
+        def apkFile = fileTree("$rootDir/settingsadapter/build/outputs/apk/debug")
                 .matching { include "*.apk" }
                 .singleFile
 
