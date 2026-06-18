@@ -5,6 +5,7 @@ import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.TextPaint;
 import android.text.style.ForegroundColorSpan;
+import android.util.DisplayMetrics;
 
 import com.my.televip.Class.ClassLoad;
 import com.my.televip.Class.ClassNames;
@@ -115,8 +116,9 @@ public class ChatMessageCell {
 
     /**
      * Prepend a label to the message timestamp string.
-     * When currentTimeString is null (not yet set for this message type) a fresh
-     * SpannableStringBuilder is created instead of silently bailing out.
+     * Always updates timeWidth/timeTextWidth — uses a fallback TextPaint when
+     * Theme.getTextPaint() cannot resolve the obfuscated chat_timePaint field,
+     * so the timestamp area is always wide enough to show the label.
      */
     private static void appendTimeLabel(String text, Object thisObject, boolean red) {
         try {
@@ -137,12 +139,17 @@ public class ChatMessageCell {
             time.insert(0, label);
             cell.setCurrentTimeString(time);
 
+            // Always update widths — fall back to a default 12sp paint when
+            // the themed paint cannot be resolved (obfuscated field name).
             TextPaint paint = Theme.getTextPaint();
-            if (paint != null) {
-                int w = (int) Math.ceil(paint.measureText(label, 0, label.length()));
-                cell.setTimeTextWidth(w + cell.getTimeTextWidth());
-                cell.setTimeWidth(w + cell.getTimeWidth());
+            if (paint == null) {
+                paint = new TextPaint();
+                DisplayMetrics dm = android.content.res.Resources.getSystem().getDisplayMetrics();
+                paint.setTextSize(12f * dm.scaledDensity);
             }
+            int w = (int) Math.ceil(paint.measureText(label, 0, label.length()));
+            cell.setTimeTextWidth(w + cell.getTimeTextWidth());
+            cell.setTimeWidth(w + cell.getTimeWidth());
         } catch (Throwable t) { Logger.e(t); }
     }
 
