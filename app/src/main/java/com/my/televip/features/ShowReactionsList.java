@@ -18,6 +18,7 @@ import com.my.televip.virtuals.ActionBar.AlertDialog;
 import com.my.televip.virtuals.SettingsIconResolver;
 import com.my.televip.virtuals.Theme;
 import com.my.televip.virtuals.messenger.MessageObject;
+import com.my.televip.virtuals.messenger.UserConfig;
 import com.my.televip.virtuals.tgnet.TLRPC;
 import com.my.televip.virtuals.ui.ChatActivity;
 
@@ -36,7 +37,6 @@ public class ShowReactionsList {
                 isEnable = true;
                 if (ClassLoad.getClass(ClassNames.CHAT_ACTIVITY) == null) return;
 
-                // Add "Who Reacted" to the long-press context menu (only when reactions exist)
                 HMethod.hookMethod(
                     ClassLoad.getClass(ClassNames.CHAT_ACTIVITY),
                     AutomationResolver.resolve("ChatActivity", "fillMessageMenu",
@@ -76,7 +76,6 @@ public class ShowReactionsList {
                             }
                         }));
 
-                // Handle the tap
                 HMethod.hookMethod(
                     ClassLoad.getClass(ClassNames.CHAT_ACTIVITY),
                     AutomationResolver.resolve("ChatActivity", "processSelectedOption",
@@ -123,6 +122,54 @@ public class ShowReactionsList {
         }
     }
 
+    /**
+     * Look up a user's display name from the MessagesController in-memory cache.
+     * Returns "First Last (@username)" if found, null if not in cache.
+     * Falls back gracefully — caller shows "User 12345" instead of crashing.
+     */
+    private static String getUserName(long userId) {
+        try {
+            // Get the raw MessagesController instance via XposedHelpers (avoids the
+            // package-private .messagesController field of the virtual wrapper).
+            Object mc = XposedHelpers.callStaticMethod(
+                ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER),
+                AutomationResolver.resolve("MessagesController", "getInstance",
+                    AutomationResolver.ResolverType.Method),
+                UserConfig.getSelectedAccount());
+            if (mc == null) return null;
+
+            Object users;
+            try {
+                users = XposedHelpers.getObjectField(mc,
+                    AutomationResolver.resolve("MessagesController", "users",
+                        AutomationResolver.ResolverType.Field));
+            } catch (Throwable t) {
+                // Fall back to the raw field name if AutomationResolver has no entry
+                users = XposedHelpers.getObjectField(mc, "users");
+            }
+            if (users == null) return null;
+
+            Object user = ((android.util.LongSparseArray<?>) users).get(userId);
+            if (user == null) return null;
+
+            String firstName = "";
+            String lastName  = "";
+            String username  = "";
+            try { firstName = (String) XposedHelpers.getObjectField(user, "first_name"); } catch (Throwable ignored) {}
+            try { lastName  = (String) XposedHelpers.getObjectField(user, "last_name");  } catch (Throwable ignored) {}
+            try { username  = (String) XposedHelpers.getObjectField(user, "username");   } catch (Throwable ignored) {}
+
+            StringBuilder name = new StringBuilder();
+            if (firstName != null && !firstName.isEmpty()) name.append(firstName.trim());
+            if (lastName  != null && !lastName.isEmpty())  { if (name.length()>0) name.append(" "); name.append(lastName.trim()); }
+            if (username  != null && !username.isEmpty())   name.append(" (@").append(username.trim()).append(")");
+            return name.length() > 0 ? name.toString().trim() : null;
+        } catch (Throwable t) {
+            Logger.e(t);
+            return null;
+        }
+    }
+
     private static void showReactionsDialog(Context context, TLRPC.Message message) {
         try {
             Object reactions = getReactions(message);
@@ -130,7 +177,7 @@ public class ShowReactionsList {
 
             StringBuilder sb = new StringBuilder();
 
-            // ── Reaction counts (emoji × N) ──────────────────────────────
+            // Reaction counts (emoji x N)
             try {
                 ArrayList<Object> results =
                     (ArrayList<Object>) XposedHelpers.getObjectField(reactions, "results");
@@ -140,20 +187,18 @@ public class ShowReactionsList {
                             int count = XposedHelpers.getIntField(rc, "count");
                             String emoji = extractEmoticon(rc);
                             if (!emoji.isEmpty())
-                                sb.append(emoji).append("  ×  ").append(count).append("\n");
+                                sb.append(emoji).append("  x  ").append(count).append("\n");
                         } catch (Throwable ignored) {}
                     }
                 }
             } catch (Throwable ignored) {}
 
-            // ── Recent reactors (who reacted) ─────────────────────────────
-            // Stored in recentReactions — available when server sends it
-            // (present even in restricted channels if Telegram still delivers the data)
+            // Recent reactors — show real names when in MessagesController cache
             try {
                 ArrayList<Object> recent =
                     (ArrayList<Object>) XposedHelpers.getObjectField(reactions, "recentReactions");
                 if (recent != null && !recent.isEmpty()) {
-                    if (sb.length() > 0) sb.append("\n─────────────\n");
+                    if (sb.length() > 0) sb.append("\n-------------\n");
                     for (Object pr : recent) {
                         try {
                             String emoji = "";
@@ -169,14 +214,21 @@ public class ShowReactionsList {
                             String who = "?";
                             if (peer != null) {
                                 long uid = 0, cid = 0, gid = 0;
-                                try { uid = XposedHelpers.getLongField(peer, "user_id"); } catch (Throwable ignored) {}
+                                try { uid = XposedHelpers.getLongField(peer, "user_id");    } catch (Throwable ignored) {}
                                 try { cid = XposedHelpers.getLongField(peer, "channel_id"); } catch (Throwable ignored) {}
-                                try { gid = XposedHelpers.getLongField(peer, "chat_id"); } catch (Throwable ignored) {}
-                                if (uid != 0) who = "👤 " + uid;
-                                else if (cid != 0) who = "📢 " + cid;
-                                else if (gid != 0) who = "👥 " + gid;
+                                try { gid = XposedHelpers.getLongField(peer, "chat_id");    } catch (Throwable ignored) {}
+
+                                if (uid != 0) {
+                                    String name = getUserName(uid);
+                                    // Show real name when cached, fall back to numeric ID
+                                    who = (name != null) ? name : "User " + uid;
+                                } else if (cid != 0) {
+                                    who = "Channel " + cid;
+                                } else if (gid != 0) {
+                                    who = "Group " + gid;
+                                }
                             }
-                            sb.append(emoji.isEmpty() ? "•" : emoji).append("  ").append(who).append("\n");
+                            sb.append(emoji.isEmpty() ? "-" : emoji).append("  ").append(who).append("\n");
                         } catch (Throwable ignored) {}
                     }
                 }
