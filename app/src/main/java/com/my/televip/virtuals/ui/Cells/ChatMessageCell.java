@@ -32,87 +32,85 @@ public class ChatMessageCell {
             if (!isEnable) {
                 isEnable = true;
                 if (ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL) != null) {
-                    HMethod.hookMethod(ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL), AutomationResolver.resolve("ChatMessageCell", "measureTime", AutomationResolver.ResolverType.Method), AutomationResolver.merge(AutomationResolver.resolveObject("measureTime", new Class[]{ClassLoad.getClass(ClassNames.MESSAGE_OBJECT)}), new AbstractMethodHook() {
-                        @Override
-                        protected void afterMethod(MethodHookParam param) {
-                            boolean showDeleted = ConfigManager.showDeletedMessages != null && ConfigManager.showDeletedMessages.isEnable();
-                            boolean showMessageId = ConfigManager.showMessageId != null && ConfigManager.showMessageId.isEnable();
+                    HMethod.hookMethod(ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL),
+                        AutomationResolver.resolve("ChatMessageCell", "measureTime", AutomationResolver.ResolverType.Method),
+                        AutomationResolver.merge(AutomationResolver.resolveObject("measureTime",
+                            new Class[]{ClassLoad.getClass(ClassNames.MESSAGE_OBJECT)}),
+                            new AbstractMethodHook() {
+                                @Override
+                                protected void afterMethod(MethodHookParam param) {
+                                    boolean showDeleted  = ConfigManager.showDeletedMessages != null && ConfigManager.showDeletedMessages.isEnable();
+                                    boolean showMessageId = ConfigManager.showMessageId      != null && ConfigManager.showMessageId.isEnable();
+                                    if (!showDeleted && !showMessageId) return;
+                                    try {
+                                        MessageObject messageObject = new MessageObject(param.args[0]);
+                                        if (messageObject.getMessageObject() == null) return;
+                                        TLRPC.Message owner = messageObject.getMessageOwner();
+                                        if (owner == null) return;
 
-                            if (showDeleted || showMessageId) {
-                                try {
-                                    MessageObject messageObject = new MessageObject(param.args[0]);
-
-                                    if (messageObject.getMessageObject() == null) return;
-
-                                    TLRPC.Message owner = messageObject.getMessageOwner();
-                                    if (owner == null)
-                                        return;
-
-                                    if (showMessageId) {
-                                        if (owner.getID() != 0) {
-                                            String textId = "ID " + owner.getID();
-                                            setSpannableStringBuilderText(textId, param.thisObject, false);
+                                        if (showMessageId && owner.getID() != 0) {
+                                            appendTimeLabel("ID " + owner.getID(), param.thisObject, false);
                                         }
-                                    }
 
-                                    int flags = owner.getFlags();
-
-                                    if (((flags & ShowDeletedMessages.FLAG_DELETED) != 0)  && showDeleted) {
-                                        setSpannableStringBuilderText(Translator.get(Keys.Deleted), param.thisObject, true);
-                                    } else {
-                                        TextPaint paint = Theme.getTextPaint();
-                                        paint.setShadowLayer(0, 0, 0, Color.WHITE);
-                                    }
-                                } catch (Throwable throwable) {
-                                    Logger.e(throwable);
+                                        int flags = owner.getFlags();
+                                        if (showDeleted && (flags & ShowDeletedMessages.FLAG_DELETED) != 0) {
+                                            appendTimeLabel(Translator.get(Keys.Deleted), param.thisObject, true);
+                                        }
+                                    } catch (Throwable t) { Logger.e(t); }
                                 }
-                            }
-                        }
-                    }));
+                            }));
                 }
             }
-        } catch (Throwable t){
-            Logger.e(t);
-        }
+        } catch (Throwable t) { Logger.e(t); }
     }
 
+    /**
+     * Prepends a label to the message timestamp.
+     * FIX: if currentTimeString is null (not yet set), create a fresh one
+     * instead of silently returning — this is the root cause of the invisible indicator.
+     */
+    private static void appendTimeLabel(String text, Object thisObject, boolean red) {
+        try {
+            OfficialChatMessageCell cell = new OfficialChatMessageCell(thisObject);
+            CharSequence raw = cell.getCurrentTimeString();
 
-    public static SpannableStringBuilder convertToStringBuilder(CharSequence charSequence) {
-        if (charSequence != null)
-            return charSequence instanceof SpannableStringBuilder ? (SpannableStringBuilder) charSequence : new SpannableStringBuilder(charSequence);
-        else
-            return null;
+            // ── ROOT CAUSE FIX ──
+            // Before: if (time == null) return;   ← silent bail-out
+            // Now:    create an empty builder so the label always shows
+            SpannableStringBuilder time = (raw != null)
+                ? (raw instanceof SpannableStringBuilder
+                    ? (SpannableStringBuilder) raw
+                    : new SpannableStringBuilder(raw))
+                : new SpannableStringBuilder();
+
+            SpannableStringBuilder label = new SpannableStringBuilder(text);
+            if (red) {
+                label.setSpan(new ForegroundColorSpan(Color.rgb(255, 69, 69)),
+                    0, label.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            }
+            label.append("  ");
+            time.insert(0, label);
+            cell.setCurrentTimeString(time);
+
+            TextPaint paint = Theme.getTextPaint();
+            if (paint != null) {
+                int w = (int) Math.ceil(paint.measureText(label, 0, label.length()));
+                cell.setTimeTextWidth(w + cell.getTimeTextWidth());
+                cell.setTimeWidth(w + cell.getTimeWidth());
+            }
+        } catch (Throwable t) { Logger.e(t); }
     }
 
-    private static void setSpannableStringBuilderText(String text, Object thisObject, boolean color){
-        OfficialChatMessageCell cell = new OfficialChatMessageCell(thisObject);
-        SpannableStringBuilder time = convertToStringBuilder(cell.getCurrentTimeString());
-        if (time == null)
-            return;
-        SpannableStringBuilder spannableStringBuilder = new SpannableStringBuilder(text);
-        if (color)
-            spannableStringBuilder.setSpan(new ForegroundColorSpan(Color.rgb(255, 0, 0)), 0, spannableStringBuilder.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        spannableStringBuilder.append(" ");
-        time.insert(0, spannableStringBuilder);
-        cell.setCurrentTimeString(time);
-        TextPaint paint = Theme.getTextPaint();
-        if (paint != null) {
-            int ceil = (int) Math.ceil(paint.measureText(spannableStringBuilder, 0, spannableStringBuilder.length()));
-            cell.setTimeTextWidth(ceil + cell.getTimeTextWidth());
-            cell.setTimeWidth(ceil + cell.getTimeWidth());
-        }
+    public static SpannableStringBuilder convertToStringBuilder(CharSequence seq) {
+        if (seq == null) return null;
+        return seq instanceof SpannableStringBuilder ? (SpannableStringBuilder) seq : new SpannableStringBuilder(seq);
     }
 
     Object chatMessageCell;
-
-    public ChatMessageCell(Object cell){ chatMessageCell = cell; }
-
+    public ChatMessageCell(Object cell) { chatMessageCell = cell; }
     public MessageObject getMessageObject() {
-        return new MessageObject(XposedHelpers.callMethod(chatMessageCell, AutomationResolver.resolve("ChatMessageCell", "getMessageObject", AutomationResolver.ResolverType.Method)));
+        return new MessageObject(XposedHelpers.callMethod(chatMessageCell,
+            AutomationResolver.resolve("ChatMessageCell", "getMessageObject", AutomationResolver.ResolverType.Method)));
     }
-
-    public Object getChatMessageCell(){
-        return chatMessageCell;
-    }
-
+    public Object getChatMessageCell() { return chatMessageCell; }
 }
