@@ -34,7 +34,7 @@ public class ChatMessageCell {
                 isEnable = true;
                 if (ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL) == null) return;
 
-                // Hook 1: measureTime — adds label to the timestamp corner ─────────────
+                // Hook 1: measureTime — adds label to the timestamp corner
                 HMethod.hookMethod(ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL),
                     AutomationResolver.resolve("ChatMessageCell", "measureTime", AutomationResolver.ResolverType.Method),
                     AutomationResolver.merge(AutomationResolver.resolveObject("measureTime",
@@ -54,10 +54,9 @@ public class ChatMessageCell {
                                     if (showMessageId && owner.getID() != 0)
                                         appendTimeLabel("ID " + owner.getID(), param.thisObject, false);
 
-                                    if (showDeleted && (owner.getFlags() & ShowDeletedMessages.FLAG_DELETED) != 0) {
-                                        // "🗑 Deleted" — emoji ensures visibility even if translation is empty
+                                    if (showDeleted && isDeleted(owner)) {
                                         String word = Translator.get(Keys.Deleted);
-                                        String label = (word != null && !word.isEmpty())
+                                        String label = (word != null && !word.isEmpty() && !word.equals(Keys.Deleted))
                                             ? "\uD83D\uDDD1 " + word
                                             : "\uD83D\uDDD1 Deleted";
                                         appendTimeLabel(label, param.thisObject, true);
@@ -66,9 +65,7 @@ public class ChatMessageCell {
                             }
                         }));
 
-                // Hook 2: any method whose first parameter is MessageObject ────────────
-                // Covers setMessageObject (all overloads) so DB-loaded deleted messages
-                // get the trash-bin prefix injected into their text BEFORE rendering.
+                // Hook 2: setMessageObject overloads — inject trash-bin into bubble text
                 try {
                     Class<?> moClass = ClassLoad.getClass(ClassNames.MESSAGE_OBJECT);
                     for (java.lang.reflect.Method m :
@@ -86,7 +83,7 @@ public class ChatMessageCell {
                                         MessageObject mo = new MessageObject(param.args[0]);
                                         TLRPC.Message owner = mo.getMessageOwner();
                                         if (owner == null) return;
-                                        if ((owner.getFlags() & ShowDeletedMessages.FLAG_DELETED) != 0)
+                                        if (isDeleted(owner))
                                             injectDeletedText(owner);
                                     } catch (Throwable t) { Logger.e(t); }
                                 }
@@ -101,8 +98,19 @@ public class ChatMessageCell {
     // ── helpers ─────────────────────────────────────────────────────────────────
 
     /**
-     * Inject the trash-bin emoji prefix into the raw TL message text field.
-     * Safe to call on every cell bind — idempotent.
+     * Returns true if this message has been marked as deleted.
+     * Checks BOTH the in-memory FLAG_DELETED bit AND the static deletedIds set.
+     * The set is populated immediately when the delete update arrives, so it
+     * works even when dialogMessagesByIds doesn't contain the message.
+     */
+    private static boolean isDeleted(TLRPC.Message owner) {
+        if ((owner.getFlags() & ShowDeletedMessages.FLAG_DELETED) != 0) return true;
+        return ShowDeletedMessages.deletedIds.contains(owner.getID());
+    }
+
+    /**
+     * Inject the trash-bin emoji prefix into the raw TL message text.
+     * Idempotent — safe to call on every cell bind.
      */
     private static void injectDeletedText(TLRPC.Message owner) {
         try {
@@ -115,10 +123,10 @@ public class ChatMessageCell {
     }
 
     /**
-     * Prepend a label to the message timestamp string.
-     * Always updates timeWidth/timeTextWidth — uses a fallback TextPaint when
-     * Theme.getTextPaint() cannot resolve the obfuscated chat_timePaint field,
-     * so the timestamp area is always wide enough to show the label.
+     * Prepend a coloured label to the message timestamp string.
+     * Always updates timeWidth/timeTextWidth — falls back to a 12sp TextPaint
+     * when Theme.getTextPaint() cannot resolve the obfuscated chat_timePaint
+     * field, so the timestamp area is always wide enough to show the label.
      */
     private static void appendTimeLabel(String text, Object thisObject, boolean red) {
         try {
@@ -139,8 +147,7 @@ public class ChatMessageCell {
             time.insert(0, label);
             cell.setCurrentTimeString(time);
 
-            // Always update widths — fall back to a default 12sp paint when
-            // the themed paint cannot be resolved (obfuscated field name).
+            // Always update widths — fallback to 12sp when themed paint unavailable
             TextPaint paint = Theme.getTextPaint();
             if (paint == null) {
                 paint = new TextPaint();
