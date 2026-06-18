@@ -94,4 +94,11 @@ public class Keys {
     public static final String MessageEditedAt    = "MessageEditedAt";
     public static final String MessageViews       = "MessageViews";
     public static final String MessageForwards    = "MessageForwards";
+
+    // New batch features
+    public static final String NoSponsoredMessages  = "NoSponsoredMessages";
+    public static final String AntiPhoneCall        = "AntiPhoneCall";
+    public static final String NoForwardRestriction = "NoForwardRestriction";
+    public static final String ShowReactionsList    = "ShowReactionsList";
+    public static final String NoReactionsAvailable = "NoReactionsAvailable";
 }
