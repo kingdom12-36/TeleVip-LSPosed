@@ -60,7 +60,13 @@ public class NoSponsoredMessages {
                             HMethod.hookMethod(m, new AbstractMethodHook() {
                                 @Override
                                 protected void beforeMethod(MethodHookParam param) {
-                                    if (ConfigManager.noSponsoredMessages.isEnable())
+                                    if (!ConfigManager.noSponsoredMessages.isEnable()) return;
+                                    // Boolean-returning checks like isSponsoredDisabled() must
+                                    // return true (= disabled), NOT null — null causes NPE.
+                                    Class<?> ret = m.getReturnType();
+                                    if (ret == boolean.class || ret == Boolean.class)
+                                        param.setResult(true);
+                                    else
                                         param.setResult(null);
                                 }
                             });
