@@ -31,52 +31,97 @@ public class ChatMessageCell {
         try {
             if (!isEnable) {
                 isEnable = true;
-                if (ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL) != null) {
-                    HMethod.hookMethod(ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL),
-                        AutomationResolver.resolve("ChatMessageCell", "measureTime", AutomationResolver.ResolverType.Method),
-                        AutomationResolver.merge(AutomationResolver.resolveObject("measureTime",
-                            new Class[]{ClassLoad.getClass(ClassNames.MESSAGE_OBJECT)}),
-                            new AbstractMethodHook() {
+                if (ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL) == null) return;
+
+                // ── Hook 1: measureTime — appends label to the timestamp corner ────────
+                HMethod.hookMethod(ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL),
+                    AutomationResolver.resolve("ChatMessageCell", "measureTime", AutomationResolver.ResolverType.Method),
+                    AutomationResolver.merge(AutomationResolver.resolveObject("measureTime",
+                        new Class[]{ClassLoad.getClass(ClassNames.MESSAGE_OBJECT)}),
+                        new AbstractMethodHook() {
+                            @Override
+                            protected void afterMethod(MethodHookParam param) {
+                                boolean showDeleted   = ConfigManager.showDeletedMessages != null && ConfigManager.showDeletedMessages.isEnable();
+                                boolean showMessageId = ConfigManager.showMessageId      != null && ConfigManager.showMessageId.isEnable();
+                                if (!showDeleted && !showMessageId) return;
+                                try {
+                                    MessageObject messageObject = new MessageObject(param.args[0]);
+                                    if (messageObject.getMessageObject() == null) return;
+                                    TLRPC.Message owner = messageObject.getMessageOwner();
+                                    if (owner == null) return;
+
+                                    if (showMessageId && owner.getID() != 0)
+                                        appendTimeLabel("ID " + owner.getID(), param.thisObject, false);
+
+                                    if (showDeleted && (owner.getFlags() & ShowDeletedMessages.FLAG_DELETED) != 0) {
+                                        // "🗑 Deleted" — emoji makes it obvious even if translation is empty
+                                        String word = Translator.get(Keys.Deleted);
+                                        String label = (word != null && !word.isEmpty()) ? "🗑 " + word : "🗑 Deleted";
+                                        appendTimeLabel(label, param.thisObject, true);
+                                    }
+                                } catch (Throwable t) { Logger.e(t); }
+                            }
+                        }));
+
+                // ── Hook 2: any method whose first param is MessageObject ──────────────
+                // This covers setMessageObject (and all its overloads) so that
+                // DB-loaded deleted messages get the "🗑  " prefix injected into
+                // the message text BEFORE the cell renders it — making the icon
+                // visible inside the bubble, not only in the tiny timestamp area.
+                try {
+                    Class<?> moClass = ClassLoad.getClass(ClassNames.MESSAGE_OBJECT);
+                    for (java.lang.reflect.Method m :
+                            ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL).getDeclaredMethods()) {
+                        if (m.getParameterCount() >= 1
+                                && m.getParameterTypes()[0] != null
+                                && m.getParameterTypes()[0].equals(moClass)) {
+                            HMethod.hookMethod(m, new AbstractMethodHook() {
                                 @Override
                                 protected void afterMethod(MethodHookParam param) {
-                                    boolean showDeleted  = ConfigManager.showDeletedMessages != null && ConfigManager.showDeletedMessages.isEnable();
-                                    boolean showMessageId = ConfigManager.showMessageId      != null && ConfigManager.showMessageId.isEnable();
-                                    if (!showDeleted && !showMessageId) return;
+                                    if (param.args[0] == null) return;
+                                    if (ConfigManager.showDeletedMessages == null
+                                            || !ConfigManager.showDeletedMessages.isEnable()) return;
                                     try {
-                                        MessageObject messageObject = new MessageObject(param.args[0]);
-                                        if (messageObject.getMessageObject() == null) return;
-                                        TLRPC.Message owner = messageObject.getMessageOwner();
+                                        MessageObject mo = new MessageObject(param.args[0]);
+                                        TLRPC.Message owner = mo.getMessageOwner();
                                         if (owner == null) return;
-
-                                        if (showMessageId && owner.getID() != 0) {
-                                            appendTimeLabel("ID " + owner.getID(), param.thisObject, false);
-                                        }
-
-                                        int flags = owner.getFlags();
-                                        if (showDeleted && (flags & ShowDeletedMessages.FLAG_DELETED) != 0) {
-                                            appendTimeLabel(Translator.get(Keys.Deleted), param.thisObject, true);
-                                        }
+                                        if ((owner.getFlags() & ShowDeletedMessages.FLAG_DELETED) != 0)
+                                            injectDeletedText(owner);
                                     } catch (Throwable t) { Logger.e(t); }
                                 }
-                            }));
-                }
+                            });
+                        }
+                    }
+                } catch (Throwable t) { Logger.e(t); }
             }
         } catch (Throwable t) { Logger.e(t); }
     }
 
+    // ── helpers ─────────────────────────────────────────────────────────────
+
     /**
-     * Prepends a label to the message timestamp.
-     * FIX: if currentTimeString is null (not yet set), create a fresh one
-     * instead of silently returning — this is the root cause of the invisible indicator.
+     * Inject "🗑  " prefix into the raw TL message.message field.
+     * Idempotent — safe to call on every cell bind.
+     */
+    private static void injectDeletedText(TLRPC.Message owner) {
+        try {
+            String txt = (String) XposedHelpers.getObjectField(owner.message, "message");
+            if (txt == null) txt = "";
+            if (!txt.startsWith("🗑")) {
+                XposedHelpers.setObjectField(owner.message, "message", "🗑  " + txt);
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    /**
+     * Prepend a label to the message timestamp string.
+     * ROOT CAUSE FIX: when currentTimeString is null (not yet set for this
+     * message type), create a fresh builder instead of silently returning.
      */
     private static void appendTimeLabel(String text, Object thisObject, boolean red) {
         try {
             OfficialChatMessageCell cell = new OfficialChatMessageCell(thisObject);
             CharSequence raw = cell.getCurrentTimeString();
-
-            // ── ROOT CAUSE FIX ──
-            // Before: if (time == null) return;   ← silent bail-out
-            // Now:    create an empty builder so the label always shows
             SpannableStringBuilder time = (raw != null)
                 ? (raw instanceof SpannableStringBuilder
                     ? (SpannableStringBuilder) raw
