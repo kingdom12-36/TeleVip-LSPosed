@@ -17,6 +17,7 @@ import com.my.televip.virtuals.messenger.MessagesController;
 import com.my.televip.virtuals.messenger.MessagesStorage;
 import com.my.televip.virtuals.messenger.NotificationCenter;
 import com.my.televip.virtuals.tgnet.TLRPC;
+import com.my.televip.virtuals.ui.Cells.ChatMessageCell;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -34,8 +35,8 @@ public class ShowDeletedMessages {
 
     /**
      * Reliable in-memory set of deleted message IDs.
-     * Independent of Telegram field-name resolution — populated directly from
-     * the delete update before any field lookup can fail.
+     * Populated directly from the delete update — independent of any
+     * Telegram field-name resolution that could fail.
      */
     public static final Set<Integer> deletedIds =
             Collections.synchronizedSet(new HashSet<>());
@@ -49,9 +50,8 @@ public class ShowDeletedMessages {
     }
 
     /**
-     * Prepend the trash-bin emoji (🗑) into the raw message text so the deleted
-     * indicator appears INSIDE the message bubble — not only in the tiny timestamp.
-     * Idempotent: skipped when the prefix is already present.
+     * Prepend the trash-bin emoji into the raw message text.
+     * Idempotent — skipped when the prefix is already present.
      */
     private static void markDeletedText(TLRPC.Message owner) {
         try {
@@ -63,23 +63,32 @@ public class ShowDeletedMessages {
         } catch (Throwable ignored) {}
     }
 
-    public static void init()
-    {
+    public static void init() {
         try {
             if (ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER) != null) {
                 Method[] messagesControllerMethods = ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER).getDeclaredMethods();
                 List<String> methodNames = new ArrayList<>();
 
                 for (Method method : messagesControllerMethods)
-                    if (method.getParameterCount() == 5 && method.getParameterTypes()[0] == ArrayList.class && method.getParameterTypes()[1] == ArrayList.class && method.getParameterTypes()[2] == ArrayList.class && method.getParameterTypes()[3] == boolean.class && method.getParameterTypes()[4] == int.class)
+                    if (method.getParameterCount() == 5
+                            && method.getParameterTypes()[0] == ArrayList.class
+                            && method.getParameterTypes()[1] == ArrayList.class
+                            && method.getParameterTypes()[2] == ArrayList.class
+                            && method.getParameterTypes()[3] == boolean.class
+                            && method.getParameterTypes()[4] == int.class)
                         methodNames.add(method.getName());
 
                 if (methodNames.size() != 1)
-                    Logger.w("Failed to hook processUpdateArray! Reason: " + (methodNames.isEmpty() ? "No method found" : "Multiple methods found") + ", " + Utils.issue);
+                    Logger.w("Failed to hook processUpdateArray! Reason: "
+                            + (methodNames.isEmpty() ? "No method found" : "Multiple methods found")
+                            + ", " + Utils.issue);
                 else {
                     String methodName = methodNames.get(0);
 
-                    HMethod.hookMethod(ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER), methodName, ArrayList.class, ArrayList.class, ArrayList.class, boolean.class, int.class, new AbstractMethodHook() {
+                    HMethod.hookMethod(ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER),
+                            methodName,
+                            ArrayList.class, ArrayList.class, ArrayList.class, boolean.class, int.class,
+                            new AbstractMethodHook() {
                         @Override
                         protected void beforeMethod(MethodHookParam param) {
                             try {
@@ -89,14 +98,15 @@ public class ShowDeletedMessages {
                                     ArrayList<Object> newUpdates = new ArrayList<>();
 
                                     for (Object item : updates) {
-                                        if (!item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_CHANNEL_MESSAGES)) && !item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_MESSAGES)))
+                                        if (!item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_CHANNEL_MESSAGES))
+                                                && !item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_MESSAGES)))
                                             newUpdates.add(item);
 
                                         if (item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_CHANNEL_MESSAGES))) {
                                             TLRPC.TL_updateDeleteChannelMessages channelMessages = new TLRPC.TL_updateDeleteChannelMessages(item);
-
-                                            // ── Reliable: add IDs to static set first ──────────────
                                             ArrayList<Integer> msgIds = channelMessages.getMessages();
+
+                                            // Reliable: add to static set immediately
                                             if (msgIds != null) deletedIds.addAll(msgIds);
 
                                             LongSparseArray dialogMessage = messagesController.getDialogMessage();
@@ -110,24 +120,25 @@ public class ShowDeletedMessages {
                                                     }
                                                 }
                                             }
-                                            markMessagesDeletedForController(messagesController.getMessagesStorage(), -channelMessages.getChannelID(), msgIds != null ? msgIds : new ArrayList<>());
+                                            markMessagesDeletedForController(
+                                                    messagesController.getMessagesStorage(),
+                                                    -channelMessages.getChannelID(),
+                                                    msgIds != null ? msgIds : new ArrayList<>());
                                         }
 
                                         if (item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_MESSAGES))) {
                                             ArrayList<Integer> messages = new TLRPC.TL_updateDeleteMessages(item).getMessages();
 
-                                            // ── Reliable: add IDs to static set first ──────────────
+                                            // Reliable: add to static set immediately
                                             if (messages != null) deletedIds.addAll(messages);
 
-                                            // Try to set FLAG_DELETED in-memory via dialogMessage
-                                            // (iterates all loaded dialogs — more complete than dialogMessagesByIds)
+                                            // Try to mark FLAG_DELETED in-memory by scanning all loaded dialogs
                                             try {
                                                 LongSparseArray dialogMessage = messagesController.getDialogMessage();
                                                 int size = dialogMessage.size();
                                                 for (int di = 0; di < size; di++) {
                                                     try {
-                                                        long key = (long) XposedHelpers.callMethod(dialogMessage.longSparseArray,
-                                                                AutomationResolver.resolve("LongSparseArray", "keyAt", AutomationResolver.ResolverType.Method), di);
+                                                        long key = dialogMessage.keyAt(di);
                                                         ArrayList<Object> dialogMsgs = dialogMessage.get(key);
                                                         if (dialogMsgs == null) continue;
                                                         for (Object msgObj : dialogMsgs) {
@@ -146,13 +157,16 @@ public class ShowDeletedMessages {
                                             if (messages != null) {
                                                 for (int id : messages) {
                                                     Object msgObj = dialogMessagesByIds.get(id);
-                                                    if (msgObj == null) continue; // fixed: was `break`
+                                                    if (msgObj == null) continue; // was `break` — now correct
                                                     TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
                                                     owner.setFlags(owner.getFlags() | FLAG_DELETED);
                                                     markDeletedText(owner);
                                                 }
                                             }
-                                            markMessagesDeletedForController(messagesController.getMessagesStorage(), 0, messages != null ? messages : new ArrayList<>());
+                                            markMessagesDeletedForController(
+                                                    messagesController.getMessagesStorage(),
+                                                    0,
+                                                    messages != null ? messages : new ArrayList<>());
                                         }
                                     }
                                     param.args[0] = newUpdates;
@@ -164,7 +178,7 @@ public class ShowDeletedMessages {
                     });
                 }
             }
-        } catch (Throwable e){
+        } catch (Throwable e) {
             Logger.e(e);
         }
     }
@@ -177,7 +191,8 @@ public class ShowDeletedMessages {
                 HMethod.hookMethod(
                         ClassLoad.getClass(ClassNames.MESSAGES_STORAGE),
                         AutomationResolver.resolve("MessagesStorage", "markMessagesAsDeleted", AutomationResolver.ResolverType.Method),
-                        AutomationResolver.merge(AutomationResolver.resolveObject("markMessagesAsDeleted", new Class[]{long.class, java.util.ArrayList.class, boolean.class, boolean.class, int.class, int.class}),
+                        AutomationResolver.merge(AutomationResolver.resolveObject("markMessagesAsDeleted",
+                                new Class[]{long.class, java.util.ArrayList.class, boolean.class, boolean.class, int.class, int.class}),
                                 new AbstractMethodHook() {
                                     @Override
                                     protected void beforeMethod(MethodHookParam param) {
@@ -185,8 +200,7 @@ public class ShowDeletedMessages {
                                             param.setResult(null);
                                         }
                                     }
-                                }
-                        ));
+                                }));
             }
 
             Method removeDeletedMessagesFromNotifications = null;
@@ -209,7 +223,8 @@ public class ShowDeletedMessages {
             HMethod.hookMethod(
                     ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER),
                     AutomationResolver.resolve("MessagesController", "deleteMessages", AutomationResolver.ResolverType.Method),
-                    AutomationResolver.merge(AutomationResolver.resolveObject("deleteMessages", new Class[]{java.util.ArrayList.class,
+                    AutomationResolver.merge(AutomationResolver.resolveObject("deleteMessages",
+                            new Class[]{java.util.ArrayList.class,
                                     java.util.ArrayList.class,
                                     ClassLoad.getClass(ClassNames.TLRPC_ENCRYPTED_CHAT),
                                     long.class,
@@ -226,25 +241,27 @@ public class ShowDeletedMessages {
                                 protected void beforeMethod(MethodHookParam param) {
                                     isDeleteMessage = true;
                                 }
-                            }
-                    ));
+                            }));
 
-            HMethod.hookMethod(ClassLoad.getClass(ClassNames.NOTIFICATION_CENTER), AutomationResolver.resolve("NotificationCenter", "postNotificationName", AutomationResolver.ResolverType.Method), AutomationResolver.merge(AutomationResolver.resolveObject("postNotificationName", new Class[]{int.class, Object[].class}), new AbstractMethodHook() {
-                @Override
-                protected void beforeMethod(MethodHookParam param) {
-                    if (!isDeleteMessage) {
-                        int id = (int) param.args[0];
-                        if (id == NotificationCenter.getMessagesDeleted()) {
-                            param.setResult(null);
-                        }
-                    }
-                }
+            HMethod.hookMethod(ClassLoad.getClass(ClassNames.NOTIFICATION_CENTER),
+                    AutomationResolver.resolve("NotificationCenter", "postNotificationName", AutomationResolver.ResolverType.Method),
+                    AutomationResolver.merge(AutomationResolver.resolveObject("postNotificationName", new Class[]{int.class, Object[].class}),
+                            new AbstractMethodHook() {
+                                @Override
+                                protected void beforeMethod(MethodHookParam param) {
+                                    if (!isDeleteMessage) {
+                                        int id = (int) param.args[0];
+                                        if (id == NotificationCenter.getMessagesDeleted()) {
+                                            param.setResult(null);
+                                        }
+                                    }
+                                }
 
-                @Override
-                protected void afterMethod(MethodHookParam param) {
-                    isDeleteMessage = false;
-                }
-            }));
+                                @Override
+                                protected void afterMethod(MethodHookParam param) {
+                                    isDeleteMessage = false;
+                                }
+                            }));
 
             ShowDeletedMessages.init();
             ShowDeletedMessages.initAutoDownload();
@@ -259,13 +276,16 @@ public class ShowDeletedMessages {
     public static void initAutoDownload() {
         if (ClassLoad.getClass(ClassNames.DOWNLOAD_CONTROLLER) == null)
             return;
-        HMethod.hookMethod(ClassLoad.getClass(ClassNames.DOWNLOAD_CONTROLLER), AutomationResolver.resolve("DownloadController", "canDownloadMedia", AutomationResolver.ResolverType.Method), ClassLoad.getClass(ClassNames.TL_MESSAGE), new AbstractMethodHook() {
-            @Override
-            protected void beforeMethod(MethodHookParam param) {
-                TLRPC.Message message = new TLRPC.Message(param.args[0]);
-                if ((message.getFlags() & FLAG_DELETED) != 0)
-                    param.setResult(0);
-            }
-        });
+        HMethod.hookMethod(ClassLoad.getClass(ClassNames.DOWNLOAD_CONTROLLER),
+                AutomationResolver.resolve("DownloadController", "canDownloadMedia", AutomationResolver.ResolverType.Method),
+                ClassLoad.getClass(ClassNames.TL_MESSAGE),
+                new AbstractMethodHook() {
+                    @Override
+                    protected void beforeMethod(MethodHookParam param) {
+                        TLRPC.Message message = new TLRPC.Message(param.args[0]);
+                        if ((message.getFlags() & FLAG_DELETED) != 0)
+                            param.setResult(0);
+                    }
+                });
     }
 }
