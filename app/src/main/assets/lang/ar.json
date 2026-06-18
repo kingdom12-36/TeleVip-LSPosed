@@ -93,5 +93,10 @@
   "MessageSentAt": "أُرسلت في",
   "MessageEditedAt": "عُدِّلت في",
   "MessageViews": "المشاهدات",
-  "MessageForwards": "التحويلات"
+  "MessageForwards": "التحويلات",
+  "NoSponsoredMessages": "إخفاء الرسائل الممولة",
+  "AntiPhoneCall": "رفض المكالمات تلقائياً",
+  "NoForwardRestriction": "تجاوز قيود التوجيه",
+  "ShowReactionsList": "عرض قائمة التفاعلات",
+  "NoReactionsAvailable": "لا تتوفر بيانات تفاعلات"
 }
