@@ -91,5 +91,10 @@
   "MessageSentAt": "发送时间",
   "MessageEditedAt": "编辑时间",
   "MessageViews": "浏览次数",
-  "MessageForwards": "转发次数"
+  "MessageForwards": "转发次数",
+  "NoSponsoredMessages": "隐藏赞助消息",
+  "AntiPhoneCall": "自动拒绝来电",
+  "NoForwardRestriction": "绕过转发限制",
+  "ShowReactionsList": "显示反应列表",
+  "NoReactionsAvailable": "暂无反应数据"
 }
