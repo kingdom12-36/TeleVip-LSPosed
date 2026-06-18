@@ -17,11 +17,13 @@ import com.my.televip.virtuals.messenger.MessagesController;
 import com.my.televip.virtuals.messenger.MessagesStorage;
 import com.my.televip.virtuals.messenger.NotificationCenter;
 import com.my.televip.virtuals.tgnet.TLRPC;
-import com.my.televip.virtuals.ui.Cells.ChatMessageCell;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import de.robv.android.xposed.XposedHelpers;
@@ -29,6 +31,14 @@ import de.robv.android.xposed.XposedHelpers;
 public class ShowDeletedMessages {
 
     public static final int FLAG_DELETED = 1 << 31;
+
+    /**
+     * Reliable in-memory set of deleted message IDs.
+     * Independent of Telegram field-name resolution — populated directly from
+     * the delete update before any field lookup can fail.
+     */
+    public static final Set<Integer> deletedIds =
+            Collections.synchronizedSet(new HashSet<>());
 
     private static boolean isDeleteMessage = false;
 
@@ -84,36 +94,66 @@ public class ShowDeletedMessages {
 
                                         if (item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_CHANNEL_MESSAGES))) {
                                             TLRPC.TL_updateDeleteChannelMessages channelMessages = new TLRPC.TL_updateDeleteChannelMessages(item);
+
+                                            // ── Reliable: add IDs to static set first ──────────────
+                                            ArrayList<Integer> msgIds = channelMessages.getMessages();
+                                            if (msgIds != null) deletedIds.addAll(msgIds);
+
                                             LongSparseArray dialogMessage = messagesController.getDialogMessage();
                                             ArrayList<Object> dialogMessages = dialogMessage.get(-channelMessages.getChannelID());
                                             if (dialogMessages != null) {
                                                 for (final Object msgObj : dialogMessages) {
                                                     TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
-                                                    if (channelMessages.getMessages().contains(owner.getID())) {
+                                                    if (msgIds != null && msgIds.contains(owner.getID())) {
                                                         owner.setFlags(owner.getFlags() | FLAG_DELETED);
-                                                        markDeletedText(owner); // inject into bubble text
+                                                        markDeletedText(owner);
                                                     }
                                                 }
                                             }
-                                            markMessagesDeletedForController(messagesController.getMessagesStorage(), -channelMessages.getChannelID(), channelMessages.getMessages());
+                                            markMessagesDeletedForController(messagesController.getMessagesStorage(), -channelMessages.getChannelID(), msgIds != null ? msgIds : new ArrayList<>());
                                         }
 
                                         if (item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_MESSAGES))) {
                                             ArrayList<Integer> messages = new TLRPC.TL_updateDeleteMessages(item).getMessages();
-                                            SparseArray<Object> dialogMessages = messagesController.getDialogMessagesByIds();
-                                            for (int id : messages) {
-                                                Object msgObj = dialogMessages.get(id);
-                                                if (msgObj == null) {
-                                                    break;
-                                                } else {
+
+                                            // ── Reliable: add IDs to static set first ──────────────
+                                            if (messages != null) deletedIds.addAll(messages);
+
+                                            // Try to set FLAG_DELETED in-memory via dialogMessage
+                                            // (iterates all loaded dialogs — more complete than dialogMessagesByIds)
+                                            try {
+                                                LongSparseArray dialogMessage = messagesController.getDialogMessage();
+                                                int size = dialogMessage.size();
+                                                for (int di = 0; di < size; di++) {
+                                                    try {
+                                                        long key = (long) XposedHelpers.callMethod(dialogMessage.longSparseArray,
+                                                                AutomationResolver.resolve("LongSparseArray", "keyAt", AutomationResolver.ResolverType.Method), di);
+                                                        ArrayList<Object> dialogMsgs = dialogMessage.get(key);
+                                                        if (dialogMsgs == null) continue;
+                                                        for (Object msgObj : dialogMsgs) {
+                                                            TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
+                                                            if (messages != null && messages.contains(owner.getID())) {
+                                                                owner.setFlags(owner.getFlags() | FLAG_DELETED);
+                                                                markDeletedText(owner);
+                                                            }
+                                                        }
+                                                    } catch (Throwable ignored) {}
+                                                }
+                                            } catch (Throwable ignored) {}
+
+                                            // Fallback: dialogMessagesByIds (last message per dialog)
+                                            SparseArray<Object> dialogMessagesByIds = messagesController.getDialogMessagesByIds();
+                                            if (messages != null) {
+                                                for (int id : messages) {
+                                                    Object msgObj = dialogMessagesByIds.get(id);
+                                                    if (msgObj == null) continue; // fixed: was `break`
                                                     TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
                                                     owner.setFlags(owner.getFlags() | FLAG_DELETED);
-                                                    markDeletedText(owner); // inject into bubble text
+                                                    markDeletedText(owner);
                                                 }
                                             }
-                                            markMessagesDeletedForController(messagesController.getMessagesStorage(), 0, messages);
+                                            markMessagesDeletedForController(messagesController.getMessagesStorage(), 0, messages != null ? messages : new ArrayList<>());
                                         }
-
                                     }
                                     param.args[0] = newUpdates;
                                 }
