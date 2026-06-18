@@ -33,7 +33,7 @@ public class ChatMessageCell {
                 isEnable = true;
                 if (ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL) == null) return;
 
-                // ── Hook 1: measureTime — appends label to the timestamp corner ────────
+                // Hook 1: measureTime — adds label to the timestamp corner ─────────────
                 HMethod.hookMethod(ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL),
                     AutomationResolver.resolve("ChatMessageCell", "measureTime", AutomationResolver.ResolverType.Method),
                     AutomationResolver.merge(AutomationResolver.resolveObject("measureTime",
@@ -54,20 +54,20 @@ public class ChatMessageCell {
                                         appendTimeLabel("ID " + owner.getID(), param.thisObject, false);
 
                                     if (showDeleted && (owner.getFlags() & ShowDeletedMessages.FLAG_DELETED) != 0) {
-                                        // "🗑 Deleted" — emoji makes it obvious even if translation is empty
+                                        // "🗑 Deleted" — emoji ensures visibility even if translation is empty
                                         String word = Translator.get(Keys.Deleted);
-                                        String label = (word != null && !word.isEmpty()) ? "🗑 " + word : "🗑 Deleted";
+                                        String label = (word != null && !word.isEmpty())
+                                            ? "\uD83D\uDDD1 " + word
+                                            : "\uD83D\uDDD1 Deleted";
                                         appendTimeLabel(label, param.thisObject, true);
                                     }
                                 } catch (Throwable t) { Logger.e(t); }
                             }
                         }));
 
-                // ── Hook 2: any method whose first param is MessageObject ──────────────
-                // This covers setMessageObject (and all its overloads) so that
-                // DB-loaded deleted messages get the "🗑  " prefix injected into
-                // the message text BEFORE the cell renders it — making the icon
-                // visible inside the bubble, not only in the tiny timestamp area.
+                // Hook 2: any method whose first parameter is MessageObject ────────────
+                // Covers setMessageObject (all overloads) so DB-loaded deleted messages
+                // get the trash-bin prefix injected into their text BEFORE rendering.
                 try {
                     Class<?> moClass = ClassLoad.getClass(ClassNames.MESSAGE_OBJECT);
                     for (java.lang.reflect.Method m :
@@ -97,26 +97,26 @@ public class ChatMessageCell {
         } catch (Throwable t) { Logger.e(t); }
     }
 
-    // ── helpers ─────────────────────────────────────────────────────────────
+    // ── helpers ─────────────────────────────────────────────────────────────────
 
     /**
-     * Inject "🗑  " prefix into the raw TL message.message field.
-     * Idempotent — safe to call on every cell bind.
+     * Inject the trash-bin emoji prefix into the raw TL message text field.
+     * Safe to call on every cell bind — idempotent.
      */
     private static void injectDeletedText(TLRPC.Message owner) {
         try {
             String txt = (String) XposedHelpers.getObjectField(owner.message, "message");
             if (txt == null) txt = "";
-            if (!txt.startsWith("🗑")) {
-                XposedHelpers.setObjectField(owner.message, "message", "🗑  " + txt);
+            if (!txt.startsWith("\uD83D\uDDD1")) {
+                XposedHelpers.setObjectField(owner.message, "message", "\uD83D\uDDD1  " + txt);
             }
         } catch (Throwable ignored) {}
     }
 
     /**
      * Prepend a label to the message timestamp string.
-     * ROOT CAUSE FIX: when currentTimeString is null (not yet set for this
-     * message type), create a fresh builder instead of silently returning.
+     * When currentTimeString is null (not yet set for this message type) a fresh
+     * SpannableStringBuilder is created instead of silently bailing out.
      */
     private static void appendTimeLabel(String text, Object thisObject, boolean red) {
         try {
