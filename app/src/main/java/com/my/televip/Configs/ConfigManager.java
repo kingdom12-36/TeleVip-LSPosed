@@ -21,6 +21,7 @@ import com.my.televip.features.HijriDate;
 import com.my.televip.features.PreventMedia;
 import com.my.televip.features.RemovesContentSaving;
 import com.my.televip.features.SaveEditsHistory;
+import com.my.televip.features.ShowMessageDetails;
 import com.my.televip.features.SecretMediaSave;
 import com.my.televip.features.ShowDeletedMessages;
 import com.my.televip.features.TelePremium;
@@ -91,6 +92,9 @@ public class ConfigManager {
     public static ConfigItem hideUpdateApp;
     public static ConfigItem fixTLError;
 
+    // Message Details
+    public static ConfigItem showMessageDetails;
+
     // Button
     public static ConfigItem btnChannel;
     public static ConfigItem btnRestartApp;
@@ -157,6 +161,9 @@ public class ConfigManager {
 
             bypassSlowMode = new ConfigItem(ConfigItem.SWITCH, Keys.BypassSlowMode, ConfigPreferences.getBoolean(Keys.BypassSlowMode), BypassSlowMode::init);
             items.add(bypassSlowMode);
+
+            showMessageDetails = new ConfigItem(ConfigItem.SWITCH, Keys.ShowMessageDetails, ConfigPreferences.getBoolean(Keys.ShowMessageDetails), () -> ShowMessageDetails.init(context));
+            items.add(showMessageDetails);
 
             items.add(shadows);
 
