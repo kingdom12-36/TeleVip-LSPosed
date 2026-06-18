@@ -8,7 +8,9 @@ import com.my.televip.Class.ClassLoad;
 import com.my.televip.Class.ClassNames;
 import com.my.televip.ClientChecker;
 import com.my.televip.Configs.ConfigManager;
+import com.my.televip.Database.MessageDatabase;
 import com.my.televip.base.AbstractMethodHook;
+import com.my.televip.calendar.ConverterCalendar;
 import com.my.televip.hooks.HMethod;
 import com.my.televip.language.Keys;
 import com.my.televip.language.Translator;
@@ -33,10 +35,14 @@ public class ShowMessageDetails {
     public static boolean isEnable = false;
     private static final int OPTION_ID = 8354001;
 
+    /** Populated in init() — lives for the process lifetime. */
+    private static MessageDatabase messageDatabase;
+
     public static void init(Context context) {
         try {
             if (!isEnable) {
                 isEnable = true;
+                messageDatabase = new MessageDatabase(context);
 
                 if (ClassLoad.getClass(ClassNames.CHAT_ACTIVITY) == null) return;
 
@@ -108,7 +114,9 @@ public class ShowMessageDetails {
         } catch (Throwable e) { Logger.e(e); }
     }
 
-    /** Try AutomationResolver first, fall back to direct field name. */
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    /** Try AutomationResolver first, fall back to the plain field name. */
     private static int getIntSafe(Object obj, String fieldName) {
         try {
             return XposedHelpers.getIntField(obj,
@@ -117,6 +125,21 @@ public class ShowMessageDetails {
             try { return XposedHelpers.getIntField(obj, fieldName); }
             catch (Throwable ignored) { return 0; }
         }
+    }
+
+    /**
+     * Extract the dialogId from a TLRPC.Peer — mirrors the pattern used by
+     * SaveEditsHistory so we look up the right rows in MessageDatabase.
+     */
+    private static long getDialogId(TLRPC.Peer fromId) {
+        if (fromId == null) return 0;
+        long userId    = fromId.getUser_id();
+        long chatId    = fromId.getChat_id();
+        long channelId = fromId.getChannel_id();
+        if (userId    != 0) return userId;
+        if (chatId    != 0) return chatId;
+        if (channelId != 0) return channelId;
+        return 0;
     }
 
     private static void showDetailsDialog(Context context, TLRPC.Message message) {
@@ -155,6 +178,46 @@ public class ShowMessageDetails {
             if (forwards > 0) {
                 sb.append(Translator.get(Keys.MessageForwards)).append(":  ").append(forwards).append("\n\n");
             }
+
+            // ── Edit history from MessageDatabase ─────────────────────────────
+            // Only shown when SaveEditsHistory has been recording edits for this
+            // message (requires the feature to be enabled when the edit happened).
+            try {
+                if (messageDatabase != null && message.getFrom_id() != null && message.getID() > 0) {
+                    long dialogId   = getDialogId(message.getFrom_id());
+                    int  maxCount   = messageDatabase.getMaxMessageCount(dialogId, message.getID());
+
+                    if (maxCount >= 1) {
+                        // Separator
+                        sb.append("─────────────────\n");
+                        sb.append(Translator.get(Keys.EditsHistory)).append("\n");
+                        sb.append("─────────────────\n\n");
+
+                        for (int i = 1; i <= maxCount; i++) {
+                            String prevMsg  = messageDatabase.getMessage(dialogId, message.getID(), i);
+                            long   prevDate = messageDatabase.getMessageDate(dialogId, message.getID(), i);
+                            if (prevMsg == null) continue;
+
+                            // Version label with date
+                            String dateStr = (prevDate != 0)
+                                ? ConverterCalendar.formatDate(prevDate)
+                                : "";
+                            sb.append("v").append(i);
+                            if (!dateStr.isEmpty()) sb.append("  [").append(dateStr).append("]");
+                            sb.append("\n");
+                            sb.append(prevMsg).append("\n\n");
+                        }
+
+                        // Append the current (latest) version for easy comparison
+                        String currentText = message.getMessage();
+                        if (currentText != null && !currentText.isEmpty()) {
+                            sb.append("v").append(maxCount + 1)
+                              .append("  [current]\n")
+                              .append(currentText).append("\n");
+                        }
+                    }
+                }
+            } catch (Throwable t) { Logger.e(t); }
 
             String text = sb.toString().trim();
             if (text.isEmpty()) return;
