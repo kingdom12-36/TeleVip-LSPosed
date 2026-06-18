@@ -17,6 +17,7 @@ import com.my.televip.virtuals.messenger.MessagesController;
 import com.my.televip.virtuals.messenger.MessagesStorage;
 import com.my.televip.virtuals.messenger.NotificationCenter;
 import com.my.televip.virtuals.tgnet.TLRPC;
+import com.my.televip.virtuals.ui.Cells.ChatMessageCell;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -38,16 +39,16 @@ public class ShowDeletedMessages {
     }
 
     /**
-     * Prepend "🗑  " to the raw message text so the deleted indicator
-     * appears INSIDE the message bubble, not just in the tiny timestamp.
-     * Idempotent — skipped if the prefix is already there.
+     * Prepend the trash-bin emoji (🗑) into the raw message text so the deleted
+     * indicator appears INSIDE the message bubble — not only in the tiny timestamp.
+     * Idempotent: skipped when the prefix is already present.
      */
     private static void markDeletedText(TLRPC.Message owner) {
         try {
             String txt = (String) XposedHelpers.getObjectField(owner.message, "message");
             if (txt == null) txt = "";
-            if (!txt.startsWith("🗑")) {
-                XposedHelpers.setObjectField(owner.message, "message", "🗑  " + txt);
+            if (!txt.startsWith("\uD83D\uDDD1")) {
+                XposedHelpers.setObjectField(owner.message, "message", "\uD83D\uDDD1  " + txt);
             }
         } catch (Throwable ignored) {}
     }
@@ -90,7 +91,7 @@ public class ShowDeletedMessages {
                                                     TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
                                                     if (channelMessages.getMessages().contains(owner.getID())) {
                                                         owner.setFlags(owner.getFlags() | FLAG_DELETED);
-                                                        markDeletedText(owner); // ← inject "🗑" into bubble text
+                                                        markDeletedText(owner); // inject into bubble text
                                                     }
                                                 }
                                             }
@@ -107,11 +108,12 @@ public class ShowDeletedMessages {
                                                 } else {
                                                     TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
                                                     owner.setFlags(owner.getFlags() | FLAG_DELETED);
-                                                    markDeletedText(owner); // ← inject "🗑" into bubble text
+                                                    markDeletedText(owner); // inject into bubble text
                                                 }
                                             }
                                             markMessagesDeletedForController(messagesController.getMessagesStorage(), 0, messages);
                                         }
+
                                     }
                                     param.args[0] = newUpdates;
                                 }
