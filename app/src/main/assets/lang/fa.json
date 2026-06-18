@@ -91,5 +91,10 @@
   "MessageSentAt": "ارسال شده در",
   "MessageEditedAt": "ویرایش شده در",
   "MessageViews": "بازدیدها",
-  "MessageForwards": "بازارسال‌ها"
+  "MessageForwards": "بازارسال‌ها",
+  "NoSponsoredMessages": "مخفی کردن پیام‌های تبلیغاتی",
+  "AntiPhoneCall": "رد خودکار تماس",
+  "NoForwardRestriction": "دور زدن محدودیت ارسال مجدد",
+  "ShowReactionsList": "نمایش لیست واکنش‌ها",
+  "NoReactionsAvailable": "داده‌ای برای واکنش‌ها موجود نیست"
 }
