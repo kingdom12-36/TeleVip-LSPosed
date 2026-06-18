@@ -17,12 +17,13 @@ import com.my.televip.virtuals.messenger.MessagesController;
 import com.my.televip.virtuals.messenger.MessagesStorage;
 import com.my.televip.virtuals.messenger.NotificationCenter;
 import com.my.televip.virtuals.tgnet.TLRPC;
-import com.my.televip.virtuals.ui.Cells.ChatMessageCell;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+
+import de.robv.android.xposed.XposedHelpers;
 
 public class ShowDeletedMessages {
 
@@ -34,6 +35,21 @@ public class ShowDeletedMessages {
 
     public static void markMessagesDeletedForController(MessagesStorage messagesStorage, long dialogId, ArrayList<Integer> delMsg) {
         MessageStorage.markMessagesDeleted(messagesStorage, dialogId, delMsg);
+    }
+
+    /**
+     * Prepend "🗑  " to the raw message text so the deleted indicator
+     * appears INSIDE the message bubble, not just in the tiny timestamp.
+     * Idempotent — skipped if the prefix is already there.
+     */
+    private static void markDeletedText(TLRPC.Message owner) {
+        try {
+            String txt = (String) XposedHelpers.getObjectField(owner.message, "message");
+            if (txt == null) txt = "";
+            if (!txt.startsWith("🗑")) {
+                XposedHelpers.setObjectField(owner.message, "message", "🗑  " + txt);
+            }
+        } catch (Throwable ignored) {}
     }
 
     public static void init()
@@ -67,23 +83,21 @@ public class ShowDeletedMessages {
 
                                         if (item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_CHANNEL_MESSAGES))) {
                                             TLRPC.TL_updateDeleteChannelMessages channelMessages = new TLRPC.TL_updateDeleteChannelMessages(item);
-
                                             LongSparseArray dialogMessage = messagesController.getDialogMessage();
-
                                             ArrayList<Object> dialogMessages = dialogMessage.get(-channelMessages.getChannelID());
                                             if (dialogMessages != null) {
                                                 for (final Object msgObj : dialogMessages) {
                                                     TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
                                                     if (channelMessages.getMessages().contains(owner.getID())) {
                                                         owner.setFlags(owner.getFlags() | FLAG_DELETED);
+                                                        markDeletedText(owner); // ← inject "🗑" into bubble text
                                                     }
                                                 }
                                             }
-
                                             markMessagesDeletedForController(messagesController.getMessagesStorage(), -channelMessages.getChannelID(), channelMessages.getMessages());
                                         }
-                                        if (item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_MESSAGES))) {
 
+                                        if (item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_MESSAGES))) {
                                             ArrayList<Integer> messages = new TLRPC.TL_updateDeleteMessages(item).getMessages();
                                             SparseArray<Object> dialogMessages = messagesController.getDialogMessagesByIds();
                                             for (int id : messages) {
@@ -93,15 +107,14 @@ public class ShowDeletedMessages {
                                                 } else {
                                                     TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
                                                     owner.setFlags(owner.getFlags() | FLAG_DELETED);
+                                                    markDeletedText(owner); // ← inject "🗑" into bubble text
                                                 }
                                             }
                                             markMessagesDeletedForController(messagesController.getMessagesStorage(), 0, messages);
                                         }
-
                                     }
                                     param.args[0] = newUpdates;
                                 }
-
                             } catch (Throwable throwable) {
                                 Logger.e(throwable);
                             }
@@ -109,7 +122,6 @@ public class ShowDeletedMessages {
                     });
                 }
             }
-
         } catch (Throwable e){
             Logger.e(e);
         }
@@ -200,14 +212,11 @@ public class ShowDeletedMessages {
 
         if (ConfigManager.showDeletedMessages.isEnable() && !ChatMessageCell.isEnable)
             ChatMessageCell.init();
-
     }
 
     public static void initAutoDownload() {
-
         if (ClassLoad.getClass(ClassNames.DOWNLOAD_CONTROLLER) == null)
             return;
-
         HMethod.hookMethod(ClassLoad.getClass(ClassNames.DOWNLOAD_CONTROLLER), AutomationResolver.resolve("DownloadController", "canDownloadMedia", AutomationResolver.ResolverType.Method), ClassLoad.getClass(ClassNames.TL_MESSAGE), new AbstractMethodHook() {
             @Override
             protected void beforeMethod(MethodHookParam param) {
@@ -216,7 +225,5 @@ public class ShowDeletedMessages {
                     param.setResult(0);
             }
         });
-
     }
-
 }
