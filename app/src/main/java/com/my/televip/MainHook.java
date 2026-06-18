@@ -32,7 +32,7 @@ public class MainHook implements IXposedHookLoadPackage, IXposedHookZygoteInit {
 
         HMethod.hookMethod(ClassLoad.getClass(ClassNames.LAUNCH_ACTIVITY), "onCreate", Bundle.class, new AbstractMethodHook() {
             @Override
-            protected void beforeMethod(MethodHookParam param) {
+            protected void afterMethod(MethodHookParam param) {
                 Activity launchActivity = (Activity) param.thisObject;
                 if (!isStart) {
                     TeleVip.startHook(launchActivity);
@@ -44,4 +44,3 @@ public class MainHook implements IXposedHookLoadPackage, IXposedHookZygoteInit {
 
 
 }
-
