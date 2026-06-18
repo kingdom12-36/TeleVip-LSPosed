@@ -85,4 +85,13 @@ public class Keys {
     public static final String QuranNotification = "QuranNotification";
     public static final String BypassSlowMode = "BypassSlowMode";
     public static final String BypassSlowModeInfo = "BypassSlowModeInfo";
+
+    // Message Details
+    public static final String ShowMessageDetails = "ShowMessageDetails";
+    public static final String MessageDetails     = "MessageDetails";
+    public static final String MessageID          = "MessageID";
+    public static final String MessageSentAt      = "MessageSentAt";
+    public static final String MessageEditedAt    = "MessageEditedAt";
+    public static final String MessageViews       = "MessageViews";
+    public static final String MessageForwards    = "MessageForwards";
 }
