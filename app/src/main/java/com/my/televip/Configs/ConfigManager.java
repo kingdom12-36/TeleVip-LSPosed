@@ -23,7 +23,11 @@ import com.my.televip.features.RemovesContentSaving;
 import com.my.televip.features.SaveEditsHistory;
 import com.my.televip.features.ShowMessageDetails;
 import com.my.televip.features.SecretMediaSave;
+import com.my.televip.features.AntiPhoneCall;
+import com.my.televip.features.NoForwardRestriction;
+import com.my.televip.features.NoSponsoredMessages;
 import com.my.televip.features.ShowDeletedMessages;
+import com.my.televip.features.ShowReactionsList;
 import com.my.televip.features.TelePremium;
 import com.my.televip.features.otherFeatures.AlwaysSaveMedia;
 import com.my.televip.features.otherFeatures.CopyNameHook;
@@ -95,6 +99,12 @@ public class ConfigManager {
     // Message Details
     public static ConfigItem showMessageDetails;
 
+    // New features
+    public static ConfigItem noSponsoredMessages;
+    public static ConfigItem noForwardRestriction;
+    public static ConfigItem showReactionsList;
+    public static ConfigItem antiPhoneCall;
+
     // Button
     public static ConfigItem btnChannel;
     public static ConfigItem btnRestartApp;
@@ -165,6 +175,15 @@ public class ConfigManager {
             showMessageDetails = new ConfigItem(ConfigItem.SWITCH, Keys.ShowMessageDetails, ConfigPreferences.getBoolean(Keys.ShowMessageDetails), () -> ShowMessageDetails.init(context));
             items.add(showMessageDetails);
 
+            noSponsoredMessages = new ConfigItem(ConfigItem.SWITCH, Keys.NoSponsoredMessages, ConfigPreferences.getBoolean(Keys.NoSponsoredMessages), NoSponsoredMessages::init);
+            items.add(noSponsoredMessages);
+
+            noForwardRestriction = new ConfigItem(ConfigItem.SWITCH, Keys.NoForwardRestriction, ConfigPreferences.getBoolean(Keys.NoForwardRestriction), NoForwardRestriction::init);
+            items.add(noForwardRestriction);
+
+            showReactionsList = new ConfigItem(ConfigItem.SWITCH, Keys.ShowReactionsList, ConfigPreferences.getBoolean(Keys.ShowReactionsList), () -> ShowReactionsList.init(context));
+            items.add(showReactionsList);
+
             items.add(shadows);
 
             // Connections
@@ -220,6 +239,9 @@ public class ConfigManager {
 
             removesContentSaving = new ConfigItem(ConfigItem.SWITCH, Keys.RemovesContentSaving, ConfigPreferences.getBoolean(Keys.RemovesContentSaving), RemovesContentSaving::init);
             items.add(removesContentSaving);
+
+            antiPhoneCall = new ConfigItem(ConfigItem.SWITCH, Keys.AntiPhoneCall, ConfigPreferences.getBoolean(Keys.AntiPhoneCall), AntiPhoneCall::init);
+            items.add(antiPhoneCall);
         }
 
         telegramPremium = new ConfigItem(ConfigItem.SWITCH, Keys.TelegramPremium, ConfigPreferences.getBoolean(Keys.TelegramPremium), TelePremium::init);
