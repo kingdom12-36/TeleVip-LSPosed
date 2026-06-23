@@ -96,5 +96,7 @@
   "AntiPhoneCall": "自动拒绝来电",
   "NoForwardRestriction": "绕过转发限制",
   "ShowReactionsList": "显示反应列表",
-  "NoReactionsAvailable": "暂无反应数据"
+  "NoReactionsAvailable": "暂无反应数据",
+  "IgnoreBlocked": "接收被屏蔽用户的消息",
+  "TeleVipAi": "TeleVip AI"
 }
