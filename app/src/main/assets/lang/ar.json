@@ -108,5 +108,8 @@
   "SaveToSavedMessages": "حفظ في المحفوظات",
   "SaveToSavedMessagesOk": "تم الحفظ في المحفوظات ✓",
   "SaveToSavedMessagesFail": "فشل الحفظ — حاول مرة أخرى",
-  "BypassSeenBy": "عرض 'تمت القراءة' في جميع المجموعات"
+  "BypassSeenBy": "عرض 'تمت القراءة' في جميع المجموعات",
+  "ScreenshotBypass": "تفعيل التقاط الشاشة في المحادثات المحمية",
+  "AnonymousForward": "إعادة التوجيه بدون علامة 'تمت إعادة التوجيه'",
+  "NoMessageLimit": "إزالة حد عدد أحرف الرسالة"
 }
