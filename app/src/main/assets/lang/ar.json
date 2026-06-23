@@ -104,5 +104,8 @@
   "ShowOthersPhone": "عرض أرقام هواتف الآخرين",
   "GhostEdit": "تعديل خفي (بدون علامة 'تم التعديل')",
   "GhostEditPasteHint": "تم حذف الأصل — الصق النص الجديد وأرسله",
-  "BypassReactionsView": "عرض من تفاعل (تجاوز القيود)"
+  "BypassReactionsView": "عرض من تفاعل (تجاوز القيود)",
+  "SaveToSavedMessages": "حفظ في المحفوظات",
+  "SaveToSavedMessagesOk": "تم الحفظ في المحفوظات ✓",
+  "SaveToSavedMessagesFail": "فشل الحفظ — حاول مرة أخرى"
 }
