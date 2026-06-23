@@ -98,5 +98,7 @@
   "AntiPhoneCall": "رفض المكالمات تلقائياً",
   "NoForwardRestriction": "تجاوز قيود التوجيه",
   "ShowReactionsList": "عرض قائمة التفاعلات",
-  "NoReactionsAvailable": "لا تتوفر بيانات تفاعلات"
+  "NoReactionsAvailable": "لا تتوفر بيانات تفاعلات",
+  "IgnoreBlocked": "استقبال رسائل المحظورين",
+  "TeleVipAi": "ذكاء اصطناعي TeleVip"
 }
