@@ -30,6 +30,9 @@ import com.my.televip.features.IgnoreBlocked;
 import com.my.televip.features.NoSponsoredMessages;
 import com.my.televip.features.ShowDeletedMessages;
 import com.my.televip.features.ShowReactionsList;
+import com.my.televip.features.ShowOthersPhone;
+import com.my.televip.features.GhostEdit;
+import com.my.televip.features.BypassReactionsView;
 import com.my.televip.features.TelePremium;
 import com.my.televip.features.otherFeatures.AlwaysSaveMedia;
 import com.my.televip.features.otherFeatures.CopyNameHook;
@@ -108,8 +111,12 @@ public class ConfigManager {
     public static ConfigItem antiPhoneCall;
 
     public static ConfigItem ignoreBlocked;
-
     public static ConfigItem teleVipAi;
+
+    // New features
+    public static ConfigItem showOthersPhone;
+    public static ConfigItem ghostEdit;
+    public static ConfigItem bypassReactionsView;
 
     // Button
     public static ConfigItem btnChannel;
@@ -143,6 +150,9 @@ public class ConfigManager {
 
         hideOnline = new ConfigItem(ConfigItem.SWITCH, Keys.HideOnline, true, ConfigPreferences.getBoolean(Keys.HideOnline), GhostMode::init);
         items.add(hideOnline);
+
+        showOthersPhone = new ConfigItem(ConfigItem.SWITCH, Keys.ShowOthersPhone, ConfigPreferences.getBoolean(Keys.ShowOthersPhone), () -> ShowOthersPhone.init(context));
+        items.add(showOthersPhone);
 
         onlineInfo = new ConfigItem(ConfigItem.INFO, Keys.OfflineVisibilityInfo);
         items.add(onlineInfo);
@@ -189,6 +199,12 @@ public class ConfigManager {
 
             showReactionsList = new ConfigItem(ConfigItem.SWITCH, Keys.ShowReactionsList, ConfigPreferences.getBoolean(Keys.ShowReactionsList), () -> ShowReactionsList.init(context));
             items.add(showReactionsList);
+
+            bypassReactionsView = new ConfigItem(ConfigItem.SWITCH, Keys.BypassReactionsView, ConfigPreferences.getBoolean(Keys.BypassReactionsView), BypassReactionsView::init);
+            items.add(bypassReactionsView);
+
+            ghostEdit = new ConfigItem(ConfigItem.SWITCH, Keys.GhostEdit, ConfigPreferences.getBoolean(Keys.GhostEdit), () -> GhostEdit.init(context));
+            items.add(ghostEdit);
 
             items.add(shadows);
 
