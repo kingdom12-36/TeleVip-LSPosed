@@ -107,5 +107,6 @@
   "BypassReactionsView": "عرض من تفاعل (تجاوز القيود)",
   "SaveToSavedMessages": "حفظ في المحفوظات",
   "SaveToSavedMessagesOk": "تم الحفظ في المحفوظات ✓",
-  "SaveToSavedMessagesFail": "فشل الحفظ — حاول مرة أخرى"
+  "SaveToSavedMessagesFail": "فشل الحفظ — حاول مرة أخرى",
+  "BypassSeenBy": "عرض 'تمت القراءة' في جميع المجموعات"
 }
