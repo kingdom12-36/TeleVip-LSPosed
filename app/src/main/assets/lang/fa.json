@@ -105,5 +105,6 @@
   "BypassReactionsView": "نمایش واکنش‌دهندگان (دور زدن محدودیت)",
   "SaveToSavedMessages": "ذخیره در پیام‌های ذخیره‌شده",
   "SaveToSavedMessagesOk": "در پیام‌های ذخیره‌شده ذخیره شد ✓",
-  "SaveToSavedMessagesFail": "ذخیره ناموفق بود — دوباره امتحان کنید"
+  "SaveToSavedMessagesFail": "ذخیره ناموفق بود — دوباره امتحان کنید",
+  "BypassSeenBy": "نمایش 'خوانده شده توسط' در همه گروه‌ها"
 }
