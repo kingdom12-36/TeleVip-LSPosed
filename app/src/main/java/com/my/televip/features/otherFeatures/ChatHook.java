@@ -9,6 +9,7 @@ import com.my.televip.Class.ClassLoad;
 import com.my.televip.Class.ClassNames;
 import com.my.televip.ClientChecker;
 import com.my.televip.base.AbstractMethodHook;
+import com.my.televip.features.TeleVipAi;
 import com.my.televip.hooks.HMethod;
 import com.my.televip.language.Keys;
 import com.my.televip.language.Translator;
@@ -24,6 +25,10 @@ import de.robv.android.xposed.XposedHelpers;
 public class ChatHook {
 
     private static boolean initialized = false;
+
+    private static final int ID_TO_BEGINNING = 8353847;
+    private static final int ID_TO_MESSAGE   = 8353848;
+    private static final int ID_AI           = 8353849;
 
     public static void init(Context context, String className) {
         if (initialized || ClientChecker.check(ClientChecker.ClientType.Nagram)) return;
@@ -44,17 +49,26 @@ public class ChatHook {
                             int drawableResource = XposedHelpers.getStaticIntField(ClassLoad.getClass(ClassNames.DRAWABLE), "msg_go_up");
 
                             if (!ClientChecker.check(ClientChecker.ClientType.iMe) && !ClientChecker.check(ClientChecker.ClientType.iMeWeb) && !ClientChecker.check(ClientChecker.ClientType.TelegramPlus) && !ClientChecker.check(ClientChecker.ClientType.XPlus) && !ClientChecker.check(ClientChecker.ClientType.forkgram) && !ClientChecker.check(ClientChecker.ClientType.forkgramBeta)) {
-                                headerItem.lazilyAddSubItem(8353847, drawableResource, Translator.get(Keys.ToTheBeginning));
+                                headerItem.lazilyAddSubItem(ID_TO_BEGINNING, drawableResource, Translator.get(Keys.ToTheBeginning));
                             }
+
                             drawableResource = XposedHelpers.getStaticIntField(ClassLoad.getClass(ClassNames.DRAWABLE), "player_new_order");
+                            headerItem.lazilyAddSubItem(ID_TO_MESSAGE, drawableResource, Translator.get(Keys.ToTheMessage));
 
-                            headerItem.lazilyAddSubItem(8353848, drawableResource, Translator.get(Keys.ToTheMessage));
-
+                            if (TeleVipAi.isEnabled()) {
+                                try {
+                                    int aiDrawable = XposedHelpers.getStaticIntField(ClassLoad.getClass(ClassNames.DRAWABLE), "msg_bot_settings");
+                                    headerItem.lazilyAddSubItem(ID_AI, aiDrawable, Translator.get(Keys.TeleVipAi));
+                                } catch (Throwable ignored) {
+                                    // fallback: reuse player_new_order if msg_bot_settings doesn't exist
+                                    int fallback = XposedHelpers.getStaticIntField(ClassLoad.getClass(ClassNames.DRAWABLE), "player_new_order");
+                                    headerItem.lazilyAddSubItem(ID_AI, fallback, Translator.get(Keys.TeleVipAi));
+                                }
+                            }
                         }
                     } catch (Throwable t){
                         Logger.e(t);
                     }
-
                 }
             }));
 
@@ -64,12 +78,19 @@ public class ChatHook {
                     try {
                         int id = (int) param.args[0];
 
+                        if (id == ID_AI) {
+                            if (TeleVipAi.isEnabled()) {
+                                TeleVipAi.showPromptDialog(context);
+                            }
+                            return;
+                        }
+
                         final Object thisClass = XposedHelpers.getObjectField(param.thisObject, AutomationResolver.resolve("ChatActivity", "this$0", AutomationResolver.ResolverType.Field));
                         ChatActivity chat = new ChatActivity(thisClass);
 
-                        if (id == 8353847) {
+                        if (id == ID_TO_BEGINNING) {
                             chat.scrollToMessageId(1, 0, true, 0, true, 0);
-                        } else if (id == 8353848) {
+                        } else if (id == ID_TO_MESSAGE) {
 
                             AlertDialog dialog = new AlertDialog(context);
                             dialog.setTitle(Translator.get(Keys.InputMessageId));
