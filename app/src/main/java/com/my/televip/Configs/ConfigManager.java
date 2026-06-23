@@ -38,6 +38,7 @@ import com.my.televip.features.BypassSeenBy;
 import com.my.televip.features.ScreenshotBypass;
 import com.my.televip.features.AnonymousForward;
 import com.my.televip.features.NoMessageLimit;
+import com.my.televip.features.NoFloodWait;
 import com.my.televip.features.TelePremium;
 import com.my.televip.features.otherFeatures.AlwaysSaveMedia;
 import com.my.televip.features.otherFeatures.CopyNameHook;
@@ -127,6 +128,7 @@ public class ConfigManager {
     public static ConfigItem screenshotBypass;
     public static ConfigItem anonymousForward;
     public static ConfigItem noMessageLimit;
+    public static ConfigItem noFloodWait;
 
     // Button
     public static ConfigItem btnChannel;
@@ -230,6 +232,9 @@ public class ConfigManager {
 
             noMessageLimit = new ConfigItem(ConfigItem.SWITCH, Keys.NoMessageLimit, ConfigPreferences.getBoolean(Keys.NoMessageLimit), NoMessageLimit::init);
             items.add(noMessageLimit);
+
+            noFloodWait = new ConfigItem(ConfigItem.SWITCH, Keys.NoFloodWait, ConfigPreferences.getBoolean(Keys.NoFloodWait), NoFloodWait::init);
+            items.add(noFloodWait);
 
             items.add(shadows);
 
