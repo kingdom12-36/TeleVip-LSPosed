@@ -100,5 +100,9 @@
   "ShowReactionsList": "Show reactions list",
   "NoReactionsAvailable": "No reaction data available",
   "IgnoreBlocked": "Receive messages from blocked users",
-  "TeleVipAi": "TeleVip AI"
+  "TeleVipAi": "TeleVip AI",
+  "ShowOthersPhone": "Show others' phone numbers",
+  "GhostEdit": "Ghost Edit (no 'Edited' stamp)",
+  "GhostEditPasteHint": "Original deleted — paste your new text and send",
+  "BypassReactionsView": "Show who reacted (bypass restriction)"
 }
