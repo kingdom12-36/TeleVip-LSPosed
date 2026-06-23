@@ -35,6 +35,9 @@ import com.my.televip.features.GhostEdit;
 import com.my.televip.features.BypassReactionsView;
 import com.my.televip.features.SaveToSavedMessages;
 import com.my.televip.features.BypassSeenBy;
+import com.my.televip.features.ScreenshotBypass;
+import com.my.televip.features.AnonymousForward;
+import com.my.televip.features.NoMessageLimit;
 import com.my.televip.features.TelePremium;
 import com.my.televip.features.otherFeatures.AlwaysSaveMedia;
 import com.my.televip.features.otherFeatures.CopyNameHook;
@@ -121,6 +124,9 @@ public class ConfigManager {
     public static ConfigItem bypassReactionsView;
     public static ConfigItem saveToSavedMessages;
     public static ConfigItem bypassSeenBy;
+    public static ConfigItem screenshotBypass;
+    public static ConfigItem anonymousForward;
+    public static ConfigItem noMessageLimit;
 
     // Button
     public static ConfigItem btnChannel;
@@ -215,6 +221,15 @@ public class ConfigManager {
 
             bypassSeenBy = new ConfigItem(ConfigItem.SWITCH, Keys.BypassSeenBy, ConfigPreferences.getBoolean(Keys.BypassSeenBy), BypassSeenBy::init);
             items.add(bypassSeenBy);
+
+            screenshotBypass = new ConfigItem(ConfigItem.SWITCH, Keys.ScreenshotBypass, ConfigPreferences.getBoolean(Keys.ScreenshotBypass), ScreenshotBypass::init);
+            items.add(screenshotBypass);
+
+            anonymousForward = new ConfigItem(ConfigItem.SWITCH, Keys.AnonymousForward, ConfigPreferences.getBoolean(Keys.AnonymousForward), AnonymousForward::init);
+            items.add(anonymousForward);
+
+            noMessageLimit = new ConfigItem(ConfigItem.SWITCH, Keys.NoMessageLimit, ConfigPreferences.getBoolean(Keys.NoMessageLimit), NoMessageLimit::init);
+            items.add(noMessageLimit);
 
             items.add(shadows);
 
