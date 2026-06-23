@@ -102,5 +102,8 @@
   "ShowOthersPhone": "نمایش شماره تلفن دیگران",
   "GhostEdit": "ویرایش شبح (بدون علامت 'ویرایش شده')",
   "GhostEditPasteHint": "پیام اصلی حذف شد — متن جدید را الصاق کنید و ارسال کنید",
-  "BypassReactionsView": "نمایش واکنش‌دهندگان (دور زدن محدودیت)"
+  "BypassReactionsView": "نمایش واکنش‌دهندگان (دور زدن محدودیت)",
+  "SaveToSavedMessages": "ذخیره در پیام‌های ذخیره‌شده",
+  "SaveToSavedMessagesOk": "در پیام‌های ذخیره‌شده ذخیره شد ✓",
+  "SaveToSavedMessagesFail": "ذخیره ناموفق بود — دوباره امتحان کنید"
 }
