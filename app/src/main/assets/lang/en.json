@@ -111,5 +111,6 @@
   "BypassSeenBy": "Show 'Seen by' in all groups",
   "ScreenshotBypass": "Enable screenshots in protected chats",
   "AnonymousForward": "Forward without 'Forwarded from' tag",
-  "NoMessageLimit": "Remove message character limit"
+  "NoMessageLimit": "Remove message character limit",
+  "NoFloodWait": "Bypass server flood wait timer"
 }
