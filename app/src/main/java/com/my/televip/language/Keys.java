@@ -116,4 +116,5 @@ public class Keys {
     public static final String ScreenshotBypass        = "ScreenshotBypass";
     public static final String AnonymousForward        = "AnonymousForward";
     public static final String NoMessageLimit          = "NoMessageLimit";
+    public static final String NoFloodWait             = "NoFloodWait";
 }
