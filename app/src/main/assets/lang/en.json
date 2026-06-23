@@ -104,5 +104,8 @@
   "ShowOthersPhone": "Show others' phone numbers",
   "GhostEdit": "Ghost Edit (no 'Edited' stamp)",
   "GhostEditPasteHint": "Original deleted — paste your new text and send",
-  "BypassReactionsView": "Show who reacted (bypass restriction)"
+  "BypassReactionsView": "Show who reacted (bypass restriction)",
+  "SaveToSavedMessages": "Save to Saved Messages",
+  "SaveToSavedMessagesOk": "Saved to Saved Messages ✓",
+  "SaveToSavedMessagesFail": "Failed to save — try again"
 }
