@@ -110,5 +110,7 @@
   "ScreenshotBypass": "在受保护的聊天中启用截图",
   "AnonymousForward": "转发时不显示"转发自"标签",
   "NoMessageLimit": "取消消息字符数限制",
-  "NoFloodWait": "绕过服务器洪水等待计时器"
+  "NoFloodWait": "绕过服务器洪水等待计时器",
+  "UnlockGroupInput": "解锁受限群组中的聊天输入框",
+  "SuppressBanKick": "屏蔽封禁/踢出/禁言通知"
 }
