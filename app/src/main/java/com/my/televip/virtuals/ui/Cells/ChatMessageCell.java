@@ -22,6 +22,9 @@ import com.my.televip.virtuals.Theme;
 import com.my.televip.virtuals.messenger.MessageObject;
 import com.my.televip.virtuals.tgnet.TLRPC;
 
+import java.lang.reflect.Method;
+
+import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 
 public class ChatMessageCell {
@@ -32,101 +35,165 @@ public class ChatMessageCell {
         try {
             if (!isEnable) {
                 isEnable = true;
-                if (ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL) == null) return;
+                Class<?> cellClass = ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL);
+                if (cellClass == null) return;
+                Class<?> moClass = ClassLoad.getClass(ClassNames.MESSAGE_OBJECT);
 
-                // Hook 1: measureTime — adds label to the timestamp corner
-                HMethod.hookMethod(ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL),
-                    AutomationResolver.resolve("ChatMessageCell", "measureTime", AutomationResolver.ResolverType.Method),
-                    AutomationResolver.merge(AutomationResolver.resolveObject("measureTime",
-                        new Class[]{ClassLoad.getClass(ClassNames.MESSAGE_OBJECT)}),
-                        new AbstractMethodHook() {
-                            @Override
-                            protected void afterMethod(MethodHookParam param) {
-                                boolean showDeleted   = ConfigManager.showDeletedMessages != null && ConfigManager.showDeletedMessages.isEnable();
-                                boolean showMessageId = ConfigManager.showMessageId      != null && ConfigManager.showMessageId.isEnable();
-                                if (!showDeleted && !showMessageId) return;
-                                try {
-                                    MessageObject messageObject = new MessageObject(param.args[0]);
-                                    if (messageObject.getMessageObject() == null) return;
-                                    TLRPC.Message owner = messageObject.getMessageOwner();
-                                    if (owner == null) return;
+                // Hook 1: measureTime — two-strategy approach
+                // Strategy A: AutomationResolver (works when mapping is current)
+                // Strategy B: brute-force scan for method(MessageObject)→void (fallback)
+                hookMeasureTime(cellClass, moClass);
 
-                                    if (showMessageId && owner.getID() != 0)
-                                        appendTimeLabel("ID " + owner.getID(), param.thisObject, false);
+                // Hook 2: setMessageObject — called every time a cell renders a message
+                // This is the reliable path: applies the ❌ prefix at render time, not deletion time
+                // Works even after app restart because it checks FLAG_DELETED from DB
+                hookSetMessageObject(cellClass, moClass);
+            }
+        } catch (Throwable t) {
+            Logger.e(t);
+        }
+    }
 
-                                    if (showDeleted && isDeleted(owner)) {
-                                        String word = Translator.get(Keys.Deleted);
-                                        String label = (word != null && !word.isEmpty() && !word.equals(Keys.Deleted))
-                                            ? "\uD83D\uDDD1 " + word
-                                            : "\uD83D\uDDD1 Deleted";
-                                        appendTimeLabel(label, param.thisObject, true);
-                                    }
-                                } catch (Throwable t) { Logger.e(t); }
-                            }
-                        }));
-
-                // Hook 2: setMessageObject overloads — inject trash-bin into bubble text
-                try {
-                    Class<?> moClass = ClassLoad.getClass(ClassNames.MESSAGE_OBJECT);
-                    for (java.lang.reflect.Method m :
-                            ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL).getDeclaredMethods()) {
-                        if (m.getParameterCount() >= 1
-                                && m.getParameterTypes()[0] != null
-                                && m.getParameterTypes()[0].equals(moClass)) {
-                            HMethod.hookMethod(m, new AbstractMethodHook() {
-                                @Override
-                                protected void afterMethod(MethodHookParam param) {
-                                    if (param.args[0] == null) return;
-                                    if (ConfigManager.showDeletedMessages == null
-                                            || !ConfigManager.showDeletedMessages.isEnable()) return;
-                                    try {
-                                        MessageObject mo = new MessageObject(param.args[0]);
-                                        TLRPC.Message owner = mo.getMessageOwner();
-                                        if (owner == null) return;
-                                        if (isDeleted(owner))
-                                            injectDeletedText(owner);
-                                    } catch (Throwable t) { Logger.e(t); }
-                                }
-                            });
+    private static void hookMeasureTime(Class<?> cellClass, Class<?> moClass) {
+        // Strategy A: AutomationResolver
+        boolean hookedViaResolver = false;
+        try {
+            HMethod.hookMethod(cellClass,
+                AutomationResolver.resolve("ChatMessageCell", "measureTime", AutomationResolver.ResolverType.Method),
+                AutomationResolver.merge(AutomationResolver.resolveObject("measureTime",
+                    new Class[]{moClass}),
+                    new AbstractMethodHook() {
+                        @Override
+                        protected void afterMethod(MethodHookParam param) {
+                            applyTimeLabel(param.args[0], param.thisObject);
                         }
-                    }
-                } catch (Throwable t) { Logger.e(t); }
+                    }));
+            hookedViaResolver = true;
+        } catch (Throwable ignored) {}
+
+        if (hookedViaResolver) return;
+
+        // Strategy B: brute-force — find any method(MessageObject)→void that isn't a setter
+        try {
+            if (moClass == null) return;
+            for (Method m : cellClass.getDeclaredMethods()) {
+                if (m.getParameterCount() == 1
+                        && moClass.isAssignableFrom(m.getParameterTypes()[0])
+                        && m.getReturnType() == void.class
+                        && !m.getName().toLowerCase().contains("set")) {
+                    XposedBridge.hookMethod(m, new AbstractMethodHook() {
+                        @Override
+                        protected void afterMethod(MethodHookParam param) {
+                            applyTimeLabel(param.args[0], param.thisObject);
+                        }
+                    });
+                }
+            }
+        } catch (Throwable t) {
+            Logger.e(t);
+        }
+    }
+
+    private static void hookSetMessageObject(Class<?> cellClass, Class<?> moClass) {
+        // Hook ALL overloads of setMessageObject — first parameter is MessageObject
+        // This fires at render time on every scroll, resume, and initial load
+        try {
+            if (moClass == null) return;
+            for (Method m : cellClass.getDeclaredMethods()) {
+                if (m.getParameterCount() >= 1
+                        && moClass.isAssignableFrom(m.getParameterTypes()[0])
+                        && (m.getName().toLowerCase().contains("set")
+                            || m.getName().toLowerCase().contains("bind"))) {
+                    try {
+                        XposedBridge.hookMethod(m, new AbstractMethodHook() {
+                            @Override
+                            protected void beforeMethod(MethodHookParam param) {
+                                applyDeletedIndicator(param.args[0]);
+                            }
+                        });
+                    } catch (Throwable ignored) {}
+                }
+            }
+        } catch (Throwable t) {
+            Logger.e(t);
+        }
+    }
+
+    /**
+     * Applies the time-area label ("❌ Deleted") — called from measureTime hook.
+     */
+    private static void applyTimeLabel(Object msgObjRaw, Object thisObject) {
+        boolean showDeleted   = ConfigManager.showDeletedMessages != null && ConfigManager.showDeletedMessages.isEnable();
+        boolean showMessageId = ConfigManager.showMessageId      != null && ConfigManager.showMessageId.isEnable();
+        if (!showDeleted && !showMessageId) return;
+        try {
+            MessageObject messageObject = new MessageObject(msgObjRaw);
+            if (messageObject.getMessageObject() == null) return;
+            TLRPC.Message owner = messageObject.getMessageOwner();
+            if (owner == null) return;
+
+            if (showMessageId && owner.getID() != 0)
+                appendTimeLabel("ID " + owner.getID(), thisObject, false);
+
+            if (showDeleted && isDeleted(owner)) {
+                String word = Translator.get(Keys.Deleted);
+                String label = (word != null && !word.isEmpty() && !word.equals(Keys.Deleted))
+                    ? "❌ " + word
+                    : "❌ Deleted";
+                appendTimeLabel(label, thisObject, true);
             }
         } catch (Throwable t) { Logger.e(t); }
     }
 
-    // ── helpers ─────────────────────────────────────────────────────────────────
+    /**
+     * Applies the "❌ " prefix to the message text bubble — called from setMessageObject hook.
+     * This is the primary visible indicator: modifies the text the user sees inside the bubble.
+     * Idempotent — skipped if prefix already present.
+     * Works after restart because it checks FLAG_DELETED (persisted in DB).
+     */
+    private static void applyDeletedIndicator(Object msgObjRaw) {
+        if (ConfigManager.showDeletedMessages == null || !ConfigManager.showDeletedMessages.isEnable()) return;
+        try {
+            MessageObject messageObject = new MessageObject(msgObjRaw);
+            if (messageObject.getMessageObject() == null) return;
+            TLRPC.Message owner = messageObject.getMessageOwner();
+            if (owner == null) return;
+
+            if (!isDeleted(owner)) return;
+
+            // Prepend ❌ to the message text field (used by Telegram to render bubble text)
+            try {
+                String txt = (String) XposedHelpers.getObjectField(owner.message, "message");
+                if (txt == null) txt = "";
+                if (!txt.startsWith("\u274C")) {
+                    XposedHelpers.setObjectField(owner.message, "message", "\u274C " + txt);
+                }
+            } catch (Throwable ignored) {}
+
+            // Also mark message as deleted in the trash-bin emoji style (fallback)
+            try {
+                String txt = (String) XposedHelpers.getObjectField(owner.message, "message");
+                if (txt != null && !txt.startsWith("\uD83D\uDDD1") && !txt.startsWith("\u274C")) {
+                    XposedHelpers.setObjectField(owner.message, "message", "\uD83D\uDDD1 " + txt);
+                }
+            } catch (Throwable ignored) {}
+        } catch (Throwable t) { Logger.e(t); }
+    }
 
     /**
-     * Returns true if this message has been marked as deleted.
-     * Checks BOTH the in-memory FLAG_DELETED bit AND the static deletedIds set.
-     * The set is populated immediately when the delete update arrives, so it
-     * works even when dialogMessagesByIds doesn't contain the message.
+     * Returns true if this message was deleted.
+     * Also populates deletedIds from FLAG_DELETED for session-level caching.
      */
     private static boolean isDeleted(TLRPC.Message owner) {
-        if ((owner.getFlags() & ShowDeletedMessages.FLAG_DELETED) != 0) return true;
+        if ((owner.getFlags() & ShowDeletedMessages.FLAG_DELETED) != 0) {
+            ShowDeletedMessages.deletedIds.add(owner.getID());
+            return true;
+        }
         return ShowDeletedMessages.deletedIds.contains(owner.getID());
     }
 
     /**
-     * Inject the trash-bin emoji prefix into the raw TL message text.
-     * Idempotent — safe to call on every cell bind.
-     */
-    private static void injectDeletedText(TLRPC.Message owner) {
-        try {
-            String txt = (String) XposedHelpers.getObjectField(owner.message, "message");
-            if (txt == null) txt = "";
-            if (!txt.startsWith("\uD83D\uDDD1")) {
-                XposedHelpers.setObjectField(owner.message, "message", "\uD83D\uDDD1  " + txt);
-            }
-        } catch (Throwable ignored) {}
-    }
-
-    /**
-     * Prepend a coloured label to the message timestamp string.
-     * Always updates timeWidth/timeTextWidth — falls back to a 12sp TextPaint
-     * when Theme.getTextPaint() cannot resolve the obfuscated chat_timePaint
-     * field, so the timestamp area is always wide enough to show the label.
+     * Appends a colored label in the message timestamp corner.
      */
     private static void appendTimeLabel(String text, Object thisObject, boolean red) {
         try {
@@ -147,7 +214,6 @@ public class ChatMessageCell {
             time.insert(0, label);
             cell.setCurrentTimeString(time);
 
-            // Always update widths — fallback to 12sp when themed paint unavailable
             TextPaint paint = Theme.getTextPaint();
             if (paint == null) {
                 paint = new TextPaint();
@@ -159,17 +225,4 @@ public class ChatMessageCell {
             cell.setTimeWidth(w + cell.getTimeWidth());
         } catch (Throwable t) { Logger.e(t); }
     }
-
-    public static SpannableStringBuilder convertToStringBuilder(CharSequence seq) {
-        if (seq == null) return null;
-        return seq instanceof SpannableStringBuilder ? (SpannableStringBuilder) seq : new SpannableStringBuilder(seq);
-    }
-
-    Object chatMessageCell;
-    public ChatMessageCell(Object cell) { chatMessageCell = cell; }
-    public MessageObject getMessageObject() {
-        return new MessageObject(XposedHelpers.callMethod(chatMessageCell,
-            AutomationResolver.resolve("ChatMessageCell", "getMessageObject", AutomationResolver.ResolverType.Method)));
-    }
-    public Object getChatMessageCell() { return chatMessageCell; }
 }
