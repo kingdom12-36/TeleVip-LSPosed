@@ -112,5 +112,7 @@
   "ScreenshotBypass": "Enable screenshots in protected chats",
   "AnonymousForward": "Forward without 'Forwarded from' tag",
   "NoMessageLimit": "Remove message character limit",
-  "NoFloodWait": "Bypass server flood wait timer"
+  "NoFloodWait": "Bypass server flood wait timer",
+  "UnlockGroupInput": "Unlock chat input in restricted groups",
+  "SuppressBanKick": "Suppress ban/kick/mute notifications"
 }
