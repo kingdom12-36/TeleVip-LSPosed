@@ -101,4 +101,5 @@ public class Keys {
     public static final String NoForwardRestriction = "NoForwardRestriction";
     public static final String ShowReactionsList    = "ShowReactionsList";
     public static final String NoReactionsAvailable = "NoReactionsAvailable";
+    public static final String IgnoreBlocked        = "IgnoreBlocked";
 }
