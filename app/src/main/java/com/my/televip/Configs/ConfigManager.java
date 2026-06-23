@@ -24,6 +24,7 @@ import com.my.televip.features.SaveEditsHistory;
 import com.my.televip.features.ShowMessageDetails;
 import com.my.televip.features.SecretMediaSave;
 import com.my.televip.features.AntiPhoneCall;
+import com.my.televip.features.TeleVipAi;
 import com.my.televip.features.NoForwardRestriction;
 import com.my.televip.features.IgnoreBlocked;
 import com.my.televip.features.NoSponsoredMessages;
@@ -107,6 +108,8 @@ public class ConfigManager {
     public static ConfigItem antiPhoneCall;
 
     public static ConfigItem ignoreBlocked;
+
+    public static ConfigItem teleVipAi;
 
     // Button
     public static ConfigItem btnChannel;
@@ -248,6 +251,9 @@ public class ConfigManager {
 
             ignoreBlocked = new ConfigItem(ConfigItem.SWITCH, Keys.IgnoreBlocked, ConfigPreferences.getBoolean(Keys.IgnoreBlocked), IgnoreBlocked::init);
             items.add(ignoreBlocked);
+
+            teleVipAi = new ConfigItem(ConfigItem.SWITCH, Keys.TeleVipAi, ConfigPreferences.getBoolean(Keys.TeleVipAi), TeleVipAi::init);
+            items.add(teleVipAi);
         }
 
         telegramPremium = new ConfigItem(ConfigItem.SWITCH, Keys.TelegramPremium, ConfigPreferences.getBoolean(Keys.TelegramPremium), TelePremium::init);
