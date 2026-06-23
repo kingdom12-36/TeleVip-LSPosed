@@ -105,8 +105,11 @@ public class Keys {
     public static final String TeleVipAi            = "TeleVipAi";
 
     // New features
-    public static final String ShowOthersPhone     = "ShowOthersPhone";
-    public static final String GhostEdit           = "GhostEdit";
-    public static final String GhostEditPasteHint  = "GhostEditPasteHint";
-    public static final String BypassReactionsView = "BypassReactionsView";
+    public static final String ShowOthersPhone        = "ShowOthersPhone";
+    public static final String GhostEdit              = "GhostEdit";
+    public static final String GhostEditPasteHint     = "GhostEditPasteHint";
+    public static final String BypassReactionsView    = "BypassReactionsView";
+    public static final String SaveToSavedMessages    = "SaveToSavedMessages";
+    public static final String SaveToSavedMessagesOk  = "SaveToSavedMessagesOk";
+    public static final String SaveToSavedMessagesFail = "SaveToSavedMessagesFail";
 }
