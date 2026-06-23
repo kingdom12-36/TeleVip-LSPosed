@@ -107,5 +107,6 @@
   "BypassReactionsView": "Show who reacted (bypass restriction)",
   "SaveToSavedMessages": "Save to Saved Messages",
   "SaveToSavedMessagesOk": "Saved to Saved Messages ✓",
-  "SaveToSavedMessagesFail": "Failed to save — try again"
+  "SaveToSavedMessagesFail": "Failed to save — try again",
+  "BypassSeenBy": "Show 'Seen by' in all groups"
 }
