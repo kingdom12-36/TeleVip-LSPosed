@@ -103,4 +103,10 @@ public class Keys {
     public static final String NoReactionsAvailable = "NoReactionsAvailable";
     public static final String IgnoreBlocked        = "IgnoreBlocked";
     public static final String TeleVipAi            = "TeleVipAi";
+
+    // New features
+    public static final String ShowOthersPhone     = "ShowOthersPhone";
+    public static final String GhostEdit           = "GhostEdit";
+    public static final String GhostEditPasteHint  = "GhostEditPasteHint";
+    public static final String BypassReactionsView = "BypassReactionsView";
 }
