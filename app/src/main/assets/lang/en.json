@@ -108,5 +108,8 @@
   "SaveToSavedMessages": "Save to Saved Messages",
   "SaveToSavedMessagesOk": "Saved to Saved Messages ✓",
   "SaveToSavedMessagesFail": "Failed to save — try again",
-  "BypassSeenBy": "Show 'Seen by' in all groups"
+  "BypassSeenBy": "Show 'Seen by' in all groups",
+  "ScreenshotBypass": "Enable screenshots in protected chats",
+  "AnonymousForward": "Forward without 'Forwarded from' tag",
+  "NoMessageLimit": "Remove message character limit"
 }
