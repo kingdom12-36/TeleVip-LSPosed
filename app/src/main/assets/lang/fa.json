@@ -98,5 +98,9 @@
   "ShowReactionsList": "نمایش لیست واکنش‌ها",
   "NoReactionsAvailable": "داده‌ای برای واکنش‌ها موجود نیست",
   "IgnoreBlocked": "دریافت پیام از کاربران مسدود شده",
-  "TeleVipAi": "هوش مصنوعی TeleVip"
+  "TeleVipAi": "هوش مصنوعی TeleVip",
+  "ShowOthersPhone": "نمایش شماره تلفن دیگران",
+  "GhostEdit": "ویرایش شبح (بدون علامت 'ویرایش شده')",
+  "GhostEditPasteHint": "پیام اصلی حذف شد — متن جدید را الصاق کنید و ارسال کنید",
+  "BypassReactionsView": "نمایش واکنش‌دهندگان (دور زدن محدودیت)"
 }
