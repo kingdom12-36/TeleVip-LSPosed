@@ -34,6 +34,7 @@ import com.my.televip.features.ShowOthersPhone;
 import com.my.televip.features.GhostEdit;
 import com.my.televip.features.BypassReactionsView;
 import com.my.televip.features.SaveToSavedMessages;
+import com.my.televip.features.BypassSeenBy;
 import com.my.televip.features.TelePremium;
 import com.my.televip.features.otherFeatures.AlwaysSaveMedia;
 import com.my.televip.features.otherFeatures.CopyNameHook;
@@ -119,6 +120,7 @@ public class ConfigManager {
     public static ConfigItem ghostEdit;
     public static ConfigItem bypassReactionsView;
     public static ConfigItem saveToSavedMessages;
+    public static ConfigItem bypassSeenBy;
 
     // Button
     public static ConfigItem btnChannel;
@@ -210,6 +212,9 @@ public class ConfigManager {
 
             saveToSavedMessages = new ConfigItem(ConfigItem.SWITCH, Keys.SaveToSavedMessages, ConfigPreferences.getBoolean(Keys.SaveToSavedMessages), () -> SaveToSavedMessages.init(context));
             items.add(saveToSavedMessages);
+
+            bypassSeenBy = new ConfigItem(ConfigItem.SWITCH, Keys.BypassSeenBy, ConfigPreferences.getBoolean(Keys.BypassSeenBy), BypassSeenBy::init);
+            items.add(bypassSeenBy);
 
             items.add(shadows);
 
