@@ -100,5 +100,9 @@
   "ShowReactionsList": "عرض قائمة التفاعلات",
   "NoReactionsAvailable": "لا تتوفر بيانات تفاعلات",
   "IgnoreBlocked": "استقبال رسائل المحظورين",
-  "TeleVipAi": "ذكاء اصطناعي TeleVip"
+  "TeleVipAi": "ذكاء اصطناعي TeleVip",
+  "ShowOthersPhone": "عرض أرقام هواتف الآخرين",
+  "GhostEdit": "تعديل خفي (بدون علامة 'تم التعديل')",
+  "GhostEditPasteHint": "تم حذف الأصل — الصق النص الجديد وأرسله",
+  "BypassReactionsView": "عرض من تفاعل (تجاوز القيود)"
 }
