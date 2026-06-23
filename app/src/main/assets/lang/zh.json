@@ -102,5 +102,8 @@
   "ShowOthersPhone": "显示他人电话号码",
   "GhostEdit": "幽灵编辑（不留"已编辑"标记）",
   "GhostEditPasteHint": "原消息已删除 — 粘贴新文本后发送",
-  "BypassReactionsView": "查看谁点了反应（绕过限制）"
+  "BypassReactionsView": "查看谁点了反应（绕过限制）",
+  "SaveToSavedMessages": "保存到收藏夹",
+  "SaveToSavedMessagesOk": "已保存到收藏夹 ✓",
+  "SaveToSavedMessagesFail": "保存失败 — 请重试"
 }
