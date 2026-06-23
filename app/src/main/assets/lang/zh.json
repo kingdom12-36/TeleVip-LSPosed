@@ -105,5 +105,6 @@
   "BypassReactionsView": "查看谁点了反应（绕过限制）",
   "SaveToSavedMessages": "保存到收藏夹",
   "SaveToSavedMessagesOk": "已保存到收藏夹 ✓",
-  "SaveToSavedMessagesFail": "保存失败 — 请重试"
+  "SaveToSavedMessagesFail": "保存失败 — 请重试",
+  "BypassSeenBy": "在所有群组中显示"已读成员""
 }
