@@ -39,6 +39,8 @@ import com.my.televip.features.ScreenshotBypass;
 import com.my.televip.features.AnonymousForward;
 import com.my.televip.features.NoMessageLimit;
 import com.my.televip.features.NoFloodWait;
+import com.my.televip.features.UnlockGroupInput;
+import com.my.televip.features.SuppressBanKick;
 import com.my.televip.features.TelePremium;
 import com.my.televip.features.otherFeatures.AlwaysSaveMedia;
 import com.my.televip.features.otherFeatures.CopyNameHook;
@@ -129,6 +131,8 @@ public class ConfigManager {
     public static ConfigItem anonymousForward;
     public static ConfigItem noMessageLimit;
     public static ConfigItem noFloodWait;
+    public static ConfigItem unlockGroupInput;
+    public static ConfigItem suppressBanKick;
 
     // Button
     public static ConfigItem btnChannel;
@@ -235,6 +239,12 @@ public class ConfigManager {
 
             noFloodWait = new ConfigItem(ConfigItem.SWITCH, Keys.NoFloodWait, ConfigPreferences.getBoolean(Keys.NoFloodWait), NoFloodWait::init);
             items.add(noFloodWait);
+
+            unlockGroupInput = new ConfigItem(ConfigItem.SWITCH, Keys.UnlockGroupInput, ConfigPreferences.getBoolean(Keys.UnlockGroupInput), UnlockGroupInput::init);
+            items.add(unlockGroupInput);
+
+            suppressBanKick = new ConfigItem(ConfigItem.SWITCH, Keys.SuppressBanKick, ConfigPreferences.getBoolean(Keys.SuppressBanKick), SuppressBanKick::init);
+            items.add(suppressBanKick);
 
             items.add(shadows);
 
