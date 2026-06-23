@@ -106,5 +106,8 @@
   "SaveToSavedMessages": "ذخیره در پیام‌های ذخیره‌شده",
   "SaveToSavedMessagesOk": "در پیام‌های ذخیره‌شده ذخیره شد ✓",
   "SaveToSavedMessagesFail": "ذخیره ناموفق بود — دوباره امتحان کنید",
-  "BypassSeenBy": "نمایش 'خوانده شده توسط' در همه گروه‌ها"
+  "BypassSeenBy": "نمایش 'خوانده شده توسط' در همه گروه‌ها",
+  "ScreenshotBypass": "فعال کردن اسکرین‌شات در چت‌های محافظت‌شده",
+  "AnonymousForward": "ارسال مجدد بدون برچسب 'فوروارد شده از'",
+  "NoMessageLimit": "حذف محدودیت تعداد کاراکتر پیام"
 }
