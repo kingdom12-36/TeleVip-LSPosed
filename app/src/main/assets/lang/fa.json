@@ -96,5 +96,7 @@
   "AntiPhoneCall": "رد خودکار تماس",
   "NoForwardRestriction": "دور زدن محدودیت ارسال مجدد",
   "ShowReactionsList": "نمایش لیست واکنش‌ها",
-  "NoReactionsAvailable": "داده‌ای برای واکنش‌ها موجود نیست"
+  "NoReactionsAvailable": "داده‌ای برای واکنش‌ها موجود نیست",
+  "IgnoreBlocked": "دریافت پیام از کاربران مسدود شده",
+  "TeleVipAi": "هوش مصنوعی TeleVip"
 }
