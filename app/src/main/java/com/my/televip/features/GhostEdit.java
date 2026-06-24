@@ -24,20 +24,26 @@ import com.my.televip.logging.Logger;
 import com.my.televip.obfuscate.AutomationResolver;
 import com.my.televip.utils.Utils;
 import com.my.televip.virtuals.SettingsIconResolver;
+import com.my.televip.virtuals.messenger.MessageObject;
 import com.my.televip.virtuals.messenger.UserConfig;
 import com.my.televip.virtuals.tgnet.TLRPC;
 import com.my.televip.virtuals.ui.ChatActivity;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.List;
 
 import de.robv.android.xposed.XposedHelpers;
 
 /**
  * GhostEdit — edit your own messages without leaving the "Edited" stamp.
  *
- * Instead of using Telegram's normal edit API (which always sets edit_date on
- * the server), this feature deletes the original message and sends a new one
- * with the updated text. The result is a fresh message with no edit history.
+ * Deletes the original message and sends a new one with the updated text.
+ * The result is a fresh message with no edit history.
+ *
+ * The fillMessageMenu hook uses a name-scan approach (hooks every overload
+ * matching the resolved method name) so it is resilient to Telegram's
+ * parameter-list changes across versions.
  *
  * Note: replies to the original message will lose their reference.
  */
@@ -51,58 +57,70 @@ public class GhostEdit {
         try {
             if (!isEnable) {
                 isEnable = true;
-                if (ClassLoad.getClass(ClassNames.CHAT_ACTIVITY) == null) return;
+                Class<?> chatClass = ClassLoad.getClass(ClassNames.CHAT_ACTIVITY);
+                if (chatClass == null) return;
 
-                // Add "Ghost Edit" to the long-press context menu on own text messages
-                HMethod.hookMethod(
-                    ClassLoad.getClass(ClassNames.CHAT_ACTIVITY),
-                    AutomationResolver.resolve("ChatActivity", "fillMessageMenu", AutomationResolver.ResolverType.Method),
-                    AutomationResolver.merge(
-                        AutomationResolver.resolveObject("fillMessageMenu", new Class[]{
-                            ClassLoad.getClass(ClassNames.MESSAGE_OBJECT),
-                            ArrayList.class, ArrayList.class, ArrayList.class
-                        }),
-                        new AbstractMethodHook() {
+                // ── Add menu item ──────────────────────────────────────────────
+                // Scan ALL overloads of fillMessageMenu so the hook fires
+                // regardless of parameter-list changes across Telegram versions.
+                String fillMenuName = AutomationResolver.resolve(
+                        "ChatActivity", "fillMessageMenu", AutomationResolver.ResolverType.Method);
+                boolean hooked = false;
+                for (Method m : chatClass.getDeclaredMethods()) {
+                    if (m.getName().equals(fillMenuName)) {
+                        HMethod.hookMethod(m, new AbstractMethodHook() {
                             @Override
                             protected void afterMethod(MethodHookParam param) {
                                 if (!ConfigManager.ghostEdit.isEnable()) return;
                                 try {
                                     ChatActivity chat = new ChatActivity(param.thisObject);
-                                    com.my.televip.virtuals.messenger.MessageObject mo = chat.getSelectedObject();
+                                    MessageObject mo = chat.getSelectedObject();
                                     if (mo == null || mo.getMessageOwner() == null) return;
-
-                                    // Only show for own outgoing text messages
                                     if (!isOwnMessage(mo)) return;
                                     String text = mo.getMessageOwner().getMessage();
                                     if (text == null || text.isEmpty()) return;
-
-                                    ArrayList<Integer> icons;
-                                    ArrayList<CharSequence> items;
-                                    ArrayList<Integer> options;
-                                    if (ClientChecker.check(ClientChecker.ClientType.Telegraph)) {
-                                        icons   = (ArrayList<Integer>)     param.args[2];
-                                        items   = (ArrayList<CharSequence>) param.args[3];
-                                        options = (ArrayList<Integer>)     param.args[4];
-                                    } else {
-                                        icons   = (ArrayList<Integer>)     param.args[1];
-                                        items   = (ArrayList<CharSequence>) param.args[2];
-                                        options = (ArrayList<Integer>)     param.args[3];
-                                    }
-                                    items.add(Translator.get(Keys.GhostEdit));
-                                    options.add(OPTION_ID);
-                                    if (!ClientChecker.check(ClientChecker.ClientType.Nagram))
-                                        icons.add(SettingsIconResolver.getIconSettings());
+                                    addMenuItem(param);
                                 } catch (Throwable t) { Logger.e(t); }
                             }
-                        }));
+                        });
+                        hooked = true;
+                    }
+                }
+                if (!hooked) {
+                    // Fallback: try legacy 4-param signature
+                    HMethod.hookMethod(chatClass, fillMenuName,
+                            AutomationResolver.merge(
+                                    AutomationResolver.resolveObject("fillMessageMenu", new Class[]{
+                                            ClassLoad.getClass(ClassNames.MESSAGE_OBJECT),
+                                            ArrayList.class, ArrayList.class, ArrayList.class
+                                    }),
+                                    new AbstractMethodHook() {
+                                        @Override
+                                        protected void afterMethod(MethodHookParam param) {
+                                            if (!ConfigManager.ghostEdit.isEnable()) return;
+                                            try {
+                                                ChatActivity chat = new ChatActivity(param.thisObject);
+                                                MessageObject mo = chat.getSelectedObject();
+                                                if (mo == null || mo.getMessageOwner() == null) return;
+                                                if (!isOwnMessage(mo)) return;
+                                                String text = mo.getMessageOwner().getMessage();
+                                                if (text == null || text.isEmpty()) return;
+                                                addMenuItem(param);
+                                            } catch (Throwable t) { Logger.e(t); }
+                                        }
+                                    }));
+                }
 
-                // Handle the click
-                HMethod.hookMethod(
-                    ClassLoad.getClass(ClassNames.CHAT_ACTIVITY),
-                    AutomationResolver.resolve("ChatActivity", "processSelectedOption", AutomationResolver.ResolverType.Method),
-                    AutomationResolver.merge(
-                        AutomationResolver.resolveObject("processSelectedOption", new Class[]{int.class}),
-                        new AbstractMethodHook() {
+                // ── Handle click ─────────────────────────────────────────────
+                // processSelectedOption(int) is stable — scan for single-int overload.
+                String processName = AutomationResolver.resolve(
+                        "ChatActivity", "processSelectedOption", AutomationResolver.ResolverType.Method);
+                boolean processHooked = false;
+                for (Method m : chatClass.getDeclaredMethods()) {
+                    if (m.getName().equals(processName)
+                            && m.getParameterCount() == 1
+                            && m.getParameterTypes()[0] == int.class) {
+                        HMethod.hookMethod(m, new AbstractMethodHook() {
                             @Override
                             protected void beforeMethod(MethodHookParam param) {
                                 if (!ConfigManager.ghostEdit.isEnable()) return;
@@ -110,17 +128,65 @@ public class GhostEdit {
                                 try {
                                     param.setResult(null);
                                     ChatActivity chat = new ChatActivity(param.thisObject);
-                                    com.my.televip.virtuals.messenger.MessageObject mo = chat.getSelectedObject();
+                                    MessageObject mo = chat.getSelectedObject();
                                     if (mo == null) return;
                                     showGhostEditDialog(context, param.thisObject, mo);
                                 } catch (Throwable t) { Logger.e(t); }
                             }
-                        }));
+                        });
+                        processHooked = true;
+                        break;
+                    }
+                }
+                if (!processHooked) {
+                    HMethod.hookMethod(chatClass, processName,
+                            AutomationResolver.merge(
+                                    AutomationResolver.resolveObject("processSelectedOption", new Class[]{int.class}),
+                                    new AbstractMethodHook() {
+                                        @Override
+                                        protected void beforeMethod(MethodHookParam param) {
+                                            if (!ConfigManager.ghostEdit.isEnable()) return;
+                                            if ((int) param.args[0] != OPTION_ID) return;
+                                            try {
+                                                param.setResult(null);
+                                                ChatActivity chat = new ChatActivity(param.thisObject);
+                                                MessageObject mo = chat.getSelectedObject();
+                                                if (mo == null) return;
+                                                showGhostEditDialog(context, param.thisObject, mo);
+                                            } catch (Throwable t) { Logger.e(t); }
+                                        }
+                                    }));
+                }
             }
         } catch (Throwable e) { Logger.e(e); }
     }
 
-    private static void showGhostEditDialog(Context ctx, Object chatActivityObj, com.my.televip.virtuals.messenger.MessageObject mo) {
+    /**
+     * Add our menu item to the context menu.
+     * Dynamically locates the last three ArrayList params (icons, items, options)
+     * so it works even when Telegram adds extra params to fillMessageMenu.
+     */
+    private static void addMenuItem(de.robv.android.xposed.XC_MethodHook.MethodHookParam param) {
+        try {
+            List<Integer> listIndices = new ArrayList<>();
+            for (int i = 0; i < param.args.length; i++) {
+                if (param.args[i] instanceof ArrayList) listIndices.add(i);
+            }
+            if (listIndices.size() < 3) return;
+
+            int n = listIndices.size();
+            ArrayList<Integer>      icons   = (ArrayList<Integer>)      param.args[listIndices.get(n - 3)];
+            ArrayList<CharSequence> items   = (ArrayList<CharSequence>)  param.args[listIndices.get(n - 2)];
+            ArrayList<Integer>      options = (ArrayList<Integer>)       param.args[listIndices.get(n - 1)];
+
+            items.add(Translator.get(Keys.GhostEdit));
+            options.add(OPTION_ID);
+            if (!ClientChecker.check(ClientChecker.ClientType.Nagram))
+                icons.add(SettingsIconResolver.getIconSettings());
+        } catch (Throwable t) { Logger.e(t); }
+    }
+
+    private static void showGhostEditDialog(Context ctx, Object chatActivityObj, MessageObject mo) {
         UI.post(() -> {
             try {
                 String currentText = mo.getMessageOwner().getMessage();
@@ -139,7 +205,7 @@ public class GhostEdit {
                 layout.addView(input);
 
                 new AlertDialog.Builder(ctx)
-                    .setTitle(Translator.get(Keys.GhostEdit) + "  👻")
+                    .setTitle(Translator.get(Keys.GhostEdit) + "  \uD83D\uDC7B")
                     .setView(layout)
                     .setPositiveButton(Translator.get(Keys.Done), (d, w) -> {
                         String newText = input.getText().toString().trim();
@@ -169,7 +235,7 @@ public class GhostEdit {
                 }
             }
 
-            // ── Step 2: Delete original message via MessagesController ────────
+            // ── Step 2: Delete original message ──────────────────────────────
             Object mc = XposedHelpers.callStaticMethod(
                 ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER),
                 AutomationResolver.resolve("MessagesController", "getInstance", AutomationResolver.ResolverType.Method),
@@ -177,7 +243,8 @@ public class GhostEdit {
 
             ArrayList<Integer> ids = new ArrayList<>();
             ids.add(msgId);
-            String deleteMethod = AutomationResolver.resolve("MessagesController", "deleteMessages", AutomationResolver.ResolverType.Method);
+            String deleteMethod = AutomationResolver.resolve(
+                    "MessagesController", "deleteMessages", AutomationResolver.ResolverType.Method);
 
             boolean deleted = false;
             for (Object[] args : new Object[][]{
@@ -185,14 +252,11 @@ public class GhostEdit {
                 {ids, null, null, dialogId, true},
                 {ids, null, null, Math.abs(dialogId), true}
             }) {
-                try {
-                    XposedHelpers.callMethod(mc, deleteMethod, args);
-                    deleted = true;
-                    break;
-                } catch (Throwable ignored) {}
+                try { XposedHelpers.callMethod(mc, deleteMethod, args); deleted = true; break; }
+                catch (Throwable ignored) {}
             }
             if (!deleted) {
-                try { XposedHelpers.callMethod(mc, "deleteMessages", ids, null, null, dialogId, true); deleted = true; }
+                try { XposedHelpers.callMethod(mc, "deleteMessages", ids, null, null, dialogId, true); }
                 catch (Throwable ignored) {}
             }
 
@@ -200,15 +264,18 @@ public class GhostEdit {
             final long finalDialogId = dialogId;
             boolean sent = false;
             try {
-                Class<?> smh = XposedHelpers.findClassIfExists("org.telegram.messenger.SendMessagesHelper", Utils.classLoader);
+                Class<?> smh = XposedHelpers.findClassIfExists(
+                        "org.telegram.messenger.SendMessagesHelper", Utils.classLoader);
                 if (smh != null) {
-                    String getInstance = AutomationResolver.resolve("SendMessagesHelper", "getInstance", AutomationResolver.ResolverType.Method);
+                    String getInstance = AutomationResolver.resolve(
+                            "SendMessagesHelper", "getInstance", AutomationResolver.ResolverType.Method);
                     Object helper;
                     try { helper = XposedHelpers.callStaticMethod(smh, getInstance, account); }
                     catch (Throwable t) { helper = XposedHelpers.callStaticMethod(smh, "getInstance", account); }
 
                     if (helper != null) {
-                        String send = AutomationResolver.resolve("SendMessagesHelper", "sendMessage", AutomationResolver.ResolverType.Method);
+                        String send = AutomationResolver.resolve(
+                                "SendMessagesHelper", "sendMessage", AutomationResolver.ResolverType.Method);
                         for (Object[] args : new Object[][]{
                             {newText, finalDialogId, null, null, null, null, null, null, true, 0, null, false},
                             {newText, finalDialogId, null, null, null, null, null, null, true, 0},
@@ -219,14 +286,17 @@ public class GhostEdit {
                             catch (Throwable ignored) {}
                         }
                         if (!sent) {
-                            try { XposedHelpers.callMethod(helper, "sendMessage", newText, finalDialogId, null, null, null, null, null, null, true, 0); sent = true; }
-                            catch (Throwable ignored) {}
+                            try {
+                                XposedHelpers.callMethod(helper, "sendMessage", newText,
+                                        finalDialogId, null, null, null, null, null, null, true, 0);
+                                sent = true;
+                            } catch (Throwable ignored) {}
                         }
                     }
                 }
             } catch (Throwable t) { Logger.e(t); }
 
-            // ── Step 4: Fallback — set text in ChatActivity's input field ─────
+            // ── Step 4: Fallback — put text into chat input field ─────────────
             if (!sent) {
                 setInputText(ctx, chatActivityObj, newText);
             }
@@ -237,15 +307,17 @@ public class GhostEdit {
         }
     }
 
-    /** Try to set the chat's text input field directly. */
     private static void setInputText(Context ctx, Object chatActivityObj, String text) {
         boolean done = false;
         for (String field : new String[]{"chatEditText", "messageEditText", "editField", "messageField"}) {
             try {
-                String resolved = AutomationResolver.resolve("ChatActivity", field, AutomationResolver.ResolverType.Field);
+                String resolved = AutomationResolver.resolve(
+                        "ChatActivity", field, AutomationResolver.ResolverType.Field);
                 Object et = null;
                 try { et = XposedHelpers.getObjectField(chatActivityObj, resolved); } catch (Throwable ignored) {}
-                if (et == null) try { et = XposedHelpers.getObjectField(chatActivityObj, field); } catch (Throwable ignored) {}
+                if (et == null) {
+                    try { et = XposedHelpers.getObjectField(chatActivityObj, field); } catch (Throwable ignored) {}
+                }
                 if (et instanceof android.widget.EditText) {
                     final android.widget.EditText editText = (android.widget.EditText) et;
                     UI.post(() -> {
@@ -270,7 +342,7 @@ public class GhostEdit {
         });
     }
 
-    private static boolean isOwnMessage(com.my.televip.virtuals.messenger.MessageObject mo) {
+    private static boolean isOwnMessage(MessageObject mo) {
         try {
             return XposedHelpers.getBooleanField(mo.getMessageOwner().message, "out");
         } catch (Throwable t) {
