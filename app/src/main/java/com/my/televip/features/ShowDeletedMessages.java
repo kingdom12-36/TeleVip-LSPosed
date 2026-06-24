@@ -35,7 +35,13 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *  3. markMessagesAsDeleted (beforeMethod) — filters preserved IDs out; blocks if empty.
  *  4. postNotificationName for messagesDeleted:
  *       beforeMethod — strips preserved IDs so ChatActivity sees [].
- *       afterMethod  — force-exits selection mode and refreshes visible cells immediately.
+ *       afterMethod  — force-exits selection mode + refreshes cells immediately:
+ *                      hideActionMode via duck-typing (tries hideActionMode() on every
+ *                      View field until one accepts it — survives obfuscation because
+ *                      method names are preserved as interface contracts).
+ *                      Cell refresh via duck-typing (tries getAdapter() on every View
+ *                      field to find the RecyclerView — does NOT rely on class names
+ *                      which ProGuard renames, only on method names which it cannot).
  *  5. removeDeletedMessagesFromNotifications — blocked.
  *  6. DownloadController.canDownloadMedia — blocked for FLAG_DELETED messages.
  */
@@ -44,17 +50,6 @@ public class ShowDeletedMessages {
     public static final int FLAG_DELETED = 1 << 31;
     public static final CopyOnWriteArrayList<Integer> deletedIds = new CopyOnWriteArrayList<>();
     public static boolean isEnable = false;
-
-    // Cached RecyclerView base class (loaded once, survives obfuscation because
-    // androidx/support libraries keep their original class names in the APK).
-    private static Class<?> sRecyclerViewClass = null;
-
-    private static Class<?> getRecyclerViewClass() {
-        if (sRecyclerViewClass != null) return sRecyclerViewClass;
-        try { sRecyclerViewClass = Class.forName("androidx.recyclerview.widget.RecyclerView"); return sRecyclerViewClass; } catch (Throwable ignored) {}
-        try { sRecyclerViewClass = Class.forName("android.support.v7.widget.RecyclerView");   return sRecyclerViewClass; } catch (Throwable ignored) {}
-        return null;
-    }
 
     // ── DB helper ─────────────────────────────────────────────────────────────
 
@@ -103,7 +98,6 @@ public class ShowDeletedMessages {
 
     // ── Selection-mode exit (Bug 2 fix) ──────────────────────────────────────
 
-    /** Gets the list of NotificationCenter observers for a given notification ID. */
     private static ArrayList<?> getObserversForId(Object nc, int notifId) {
         try {
             String m = AutomationResolver.resolve("NotificationCenter", "getObservers", AutomationResolver.ResolverType.Method);
@@ -124,7 +118,6 @@ public class ShowDeletedMessages {
         return null;
     }
 
-    /** Called from Hook 4 afterMethod — finds ChatActivity observers and fixes them. */
     private static void forceClearSelectionMode(Object ncInstance) {
         try {
             ArrayList<?> observers = getObserversForId(ncInstance, NotificationCenter.getMessagesDeleted());
@@ -139,13 +132,12 @@ public class ShowDeletedMessages {
     }
 
     /**
-     * Clears selectedMessagesIds for our preserved IDs, hides the action bar,
-     * then forces an immediate visual refresh of all visible cells.
+     * Clears selectedMessagesIds for preserved IDs, hides the action bar, and
+     * forces cells to redraw with the X indicator and without selection circles.
      *
-     * selectedMessagesIds vs messagesDict heuristic:
-     *   Both are SparseArray[] on ChatActivity.  selectedMessagesIds has ≤ 200 entries
-     *   total AND contains keys that are in deletedIds.  messagesDict has hundreds of
-     *   entries and most keys are NOT in deletedIds.
+     * selectedMessagesIds identification: the SparseArray[] whose every key is
+     * contained in deletedIds (the selected messages we preserved).  messagesDict
+     * has hundreds of keys, most NOT in deletedIds, so it is reliably excluded.
      */
     private static void clearSelectionOnChatActivity(Object ca, Class<?> caClass) {
         try {
@@ -163,14 +155,32 @@ public class ShowDeletedMessages {
                     Object val = f.get(ca);
                     if (!(val instanceof android.util.SparseArray[])) continue;
                     android.util.SparseArray<?>[] arrays = (android.util.SparseArray<?>[]) val;
+
+                    // Must be non-empty
                     int total = 0; for (android.util.SparseArray<?> sa : arrays) total += sa.size();
-                    if (total > 200) continue; // messagesDict has many more entries
-                    boolean hasKey = false;
-                    for (android.util.SparseArray<?> sa : arrays)
-                        for (Integer id : deletedIds) if (sa.indexOfKey(id) >= 0) { hasKey = true; break; }
-                    if (!hasKey) continue;
-                    for (android.util.SparseArray<?> sa : arrays)
-                        for (Integer id : deletedIds) if (sa.indexOfKey(id) >= 0) { sa.delete(id); clearedAny = true; }
+                    if (total == 0) continue;
+
+                    // Every key in this SparseArray[] must be in deletedIds.
+                    // selectedMessagesIds holds exactly the selected messages (all in deletedIds).
+                    // messagesDict holds ALL loaded messages — most keys NOT in deletedIds.
+                    boolean allKeysInDeletedIds = true;
+                    outer2:
+                    for (android.util.SparseArray<?> sa : arrays) {
+                        for (int k = 0; k < sa.size(); k++) {
+                            if (!deletedIds.contains(sa.keyAt(k))) {
+                                allKeysInDeletedIds = false;
+                                break outer2;
+                            }
+                        }
+                    }
+                    if (!allKeysInDeletedIds) continue;
+
+                    // This is selectedMessagesIds — clear our preserved IDs from it
+                    for (android.util.SparseArray<?> sa : arrays) {
+                        for (Integer id : deletedIds) {
+                            if (sa.indexOfKey(id) >= 0) { sa.delete(id); clearedAny = true; }
+                        }
+                    }
                     break outer;
                 }
                 cls = cls.getSuperclass();
@@ -178,7 +188,7 @@ public class ShowDeletedMessages {
 
             if (!clearedAny) return;
 
-            // Step 2: check all-empty then hide action mode
+            // Step 2: check if all arrays are empty → hide action mode
             boolean allEmpty = true;
             cls = caClass;
             outerEmpty:
@@ -191,43 +201,68 @@ public class ShowDeletedMessages {
                     Object val = f.get(ca);
                     if (!(val instanceof android.util.SparseArray[])) continue;
                     android.util.SparseArray<?>[] arrays = (android.util.SparseArray<?>[]) val;
+                    // Only check arrays that could be selectedMessagesIds (not messagesDict)
                     int total = 0; for (android.util.SparseArray<?> sa : arrays) total += sa.size();
-                    if (total > 200) continue;
-                    for (android.util.SparseArray<?> sa : arrays)
+                    if (total > 200) continue; // messagesDict has many more entries
+                    for (android.util.SparseArray<?> sa : arrays) {
                         if (sa.size() > 0) { allEmpty = false; break outerEmpty; }
+                    }
                 }
                 cls = cls.getSuperclass();
             }
 
             if (allEmpty) hideActionMode(ca, caClass);
 
-            // Step 3: refresh all visible cells immediately
+            // Step 3: refresh visible cells
             refreshVisibleCells(ca, caClass);
 
         } catch (Throwable t) { Logger.e(t); }
     }
 
+    /**
+     * Hides the chat action mode bar (the toolbar that appears when messages are selected).
+     *
+     * Uses duck-typing: tries hideActionMode() on every android.view.View field found in
+     * ChatActivity's class hierarchy, stopping at the first success.  This works in
+     * obfuscated builds because:
+     *   - android.view.View is a framework class that cannot be renamed by ProGuard
+     *   - hideActionMode() is Telegram's own ActionBar method whose name may be kept
+     *     because it's called from many places throughout the codebase
+     * Falls back to AutomationResolver name resolution for builds where it IS registered.
+     */
     private static void hideActionMode(Object ca, Class<?> caClass) {
-        // Try direct call on ChatActivity (resolved + raw)
-        try { de.robv.android.xposed.XposedHelpers.callMethod(ca, AutomationResolver.resolve("ChatActivity", "hideActionMode", AutomationResolver.ResolverType.Method)); return; } catch (Throwable ignored) {}
-        try { de.robv.android.xposed.XposedHelpers.callMethod(ca, "hideActionMode"); return; } catch (Throwable ignored) {}
-        // Try actionBar field via AutomationResolver
+        // Priority 1: AutomationResolver → direct call on ChatActivity
         try {
-            Object ab = de.robv.android.xposed.XposedHelpers.getObjectField(ca, AutomationResolver.resolve("ChatActivity", "actionBar", AutomationResolver.ResolverType.Field));
+            de.robv.android.xposed.XposedHelpers.callMethod(ca,
+                    AutomationResolver.resolve("ChatActivity", "hideActionMode", AutomationResolver.ResolverType.Method));
+            return;
+        } catch (Throwable ignored) {}
+
+        // Priority 2: raw name → direct call on ChatActivity
+        try { de.robv.android.xposed.XposedHelpers.callMethod(ca, "hideActionMode"); return; }
+        catch (Throwable ignored) {}
+
+        // Priority 3: AutomationResolver for actionBar field → hideActionMode on it
+        try {
+            Object ab = de.robv.android.xposed.XposedHelpers.getObjectField(ca,
+                    AutomationResolver.resolve("ChatActivity", "actionBar", AutomationResolver.ResolverType.Field));
             if (ab != null) { de.robv.android.xposed.XposedHelpers.callMethod(ab, "hideActionMode"); return; }
         } catch (Throwable ignored) {}
-        // Type-scan for ActionBar field in class hierarchy
+
+        // Priority 4: duck-typing — try hideActionMode() on every View field in the class hierarchy.
+        // The ActionBar is the only View in ChatActivity that has this method.
         try {
-            Class<?> abClass = ClassLoad.getClass("org.telegram.ui.ActionBar.ActionBar");
             Class<?> cls = caClass;
             while (cls != null && !Object.class.equals(cls)) {
                 for (Field f : cls.getDeclaredFields()) {
-                    if (!f.getType().getName().contains("ActionBar")) continue;
-                    if (abClass != null && !abClass.isAssignableFrom(f.getType())) continue;
+                    if (f.getType().isPrimitive()) continue;
                     f.setAccessible(true);
-                    Object ab = f.get(ca);
-                    if (ab == null) continue;
-                    try { de.robv.android.xposed.XposedHelpers.callMethod(ab, "hideActionMode"); return; } catch (Throwable ignored) {}
+                    try {
+                        Object val = f.get(ca);
+                        if (!(val instanceof android.view.View)) continue;
+                        de.robv.android.xposed.XposedHelpers.callMethod(val, "hideActionMode");
+                        return; // succeeded
+                    } catch (Throwable ignored) {}
                 }
                 cls = cls.getSuperclass();
             }
@@ -235,59 +270,62 @@ public class ShowDeletedMessages {
     }
 
     /**
-     * Finds every RecyclerView in ChatActivity and immediately:
-     *   (a) invalidates all currently-visible child views — forces redraw so circles
-     *       vanish and the X-in-timestamp appears (measureTime hook fires on redraw)
-     *   (b) calls notifyDataSetChanged() on the adapter — triggers onBindViewHolder
-     *       so setMessageObject fires and the X-in-text prefix is applied
+     * Forces all currently-visible chat message cells to redraw immediately, making
+     * the X indicator appear and selection circles disappear without requiring a scroll.
      *
-     * RecyclerView detection uses the androidx/support base class via isAssignableFrom
-     * rather than a string match on the type name, so it works even when Telegram's
-     * RecyclerListView subclass is renamed by ProGuard.
+     * The main chat RecyclerView is found by duck-typing:
+     *   - Walk every field in ChatActivity's class hierarchy
+     *   - Filter to fields whose value is an android.view.View (framework class, never renamed)
+     *   - Try calling getAdapter() on each — only RecyclerView/ListView have this method
+     *   - Among matching views, pick the one whose adapter reports the most items (= chat list)
      *
-     * The "main" chat list is selected as the RecyclerView whose adapter reports the
-     * most items — it will always have more entries than any overlay/panel list.
+     * This works in obfuscated builds where the RecyclerListView subclass name is renamed,
+     * because getAdapter() / getItemCount() / getChildCount() / getChildAt() / invalidate()
+     * are all standard Android or RecyclerView API methods that ProGuard cannot rename.
+     *
+     * Two refresh paths:
+     *   (a) Invalidate each visible child — forces redraw at next vsync so cells call
+     *       measureTime (our hook) which draws the X-in-timestamp; also redraws circles
+     *       based on the now-cleared selectedMessagesIds.
+     *   (b) notifyDataSetChanged on the adapter — triggers onBindViewHolder so cells call
+     *       setMessageObject (our hook) which applies the X-in-text prefix.
      */
     private static void refreshVisibleCells(Object ca, Class<?> caClass) {
-        Class<?> rvClass = getRecyclerViewClass();
-
-        // Collect all RecyclerView instances from ChatActivity fields
-        List<Object> allRvs = new ArrayList<>();
+        // Collect all RecyclerView-like views via duck-typing
+        List<Object> recyclerViews = new ArrayList<>();
         try {
             Class<?> cls = caClass;
             while (cls != null && !Object.class.equals(cls)) {
                 for (Field f : cls.getDeclaredFields()) {
-                    boolean isRv = f.getType().getName().contains("RecyclerView");
-                    if (!isRv && rvClass != null) isRv = rvClass.isAssignableFrom(f.getType());
-                    if (!isRv) continue;
+                    if (f.getType().isPrimitive()) continue;
                     f.setAccessible(true);
                     try {
-                        Object rv = f.get(ca);
-                        if (rv != null) allRvs.add(rv);
+                        Object val = f.get(ca);
+                        if (!(val instanceof android.view.View)) continue;
+                        // Duck-type: does it have getAdapter()?
+                        Object adapter = de.robv.android.xposed.XposedHelpers.callMethod(val, "getAdapter");
+                        if (adapter != null) recyclerViews.add(val);
                     } catch (Throwable ignored) {}
                 }
                 cls = cls.getSuperclass();
             }
         } catch (Throwable ignored) {}
 
-        if (allRvs.isEmpty()) return;
+        if (recyclerViews.isEmpty()) return;
 
-        // Pick the RecyclerView with the most adapter items = main chat list
+        // Pick the one with the most adapter items = main chat list
         Object mainRv = null;
         int maxItems = -1;
-        for (Object rv : allRvs) {
+        for (Object rv : recyclerViews) {
             try {
                 Object adapter = de.robv.android.xposed.XposedHelpers.callMethod(rv, "getAdapter");
-                if (adapter == null) continue;
                 int count = (int) de.robv.android.xposed.XposedHelpers.callMethod(adapter, "getItemCount");
                 if (count > maxItems) { maxItems = count; mainRv = rv; }
             } catch (Throwable ignored) {}
         }
+        if (mainRv == null) mainRv = recyclerViews.get(0);
 
-        // Fallback: use first non-null rv if none had a countable adapter
-        if (mainRv == null) mainRv = allRvs.get(0);
-
-        // (a) Invalidate every currently-visible child — immediate redraw on next vsync
+        // (a) Invalidate each visible child — immediate redraw (circles + X-in-timestamp)
         try {
             int childCount = (int) de.robv.android.xposed.XposedHelpers.callMethod(mainRv, "getChildCount");
             for (int i = 0; i < childCount; i++) {
@@ -298,14 +336,13 @@ public class ShowDeletedMessages {
             }
         } catch (Throwable ignored) {}
 
-        // (b) notifyDataSetChanged so onBindViewHolder fires — applies X-in-text
+        // (b) notifyDataSetChanged — triggers onBindViewHolder (X-in-text via setMessageObject hook)
         try {
             Object adapter = de.robv.android.xposed.XposedHelpers.callMethod(mainRv, "getAdapter");
             if (adapter != null) {
-                // Telegram's ChatActivityAdapter overrides notifyDataSetChanged(boolean);
-                // try that first, fall back to the standard no-arg RecyclerView.Adapter method.
+                // Telegram's ChatActivityAdapter has notifyDataSetChanged(boolean); try it first
                 try { de.robv.android.xposed.XposedHelpers.callMethod(adapter, "notifyDataSetChanged", true); }
-                catch (Throwable ignored) { de.robv.android.xposed.XposedHelpers.callMethod(adapter, "notifyDataSetChanged"); }
+                catch (Throwable e) { de.robv.android.xposed.XposedHelpers.callMethod(adapter, "notifyDataSetChanged"); }
             }
         } catch (Throwable ignored) {}
     }
@@ -315,7 +352,6 @@ public class ShowDeletedMessages {
     public static void init() {
         try {
             if (ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER) == null) return;
-
             List<String> candidates = new ArrayList<>();
             for (Method m : ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER).getDeclaredMethods()) {
                 if (m.getParameterCount() == 5
@@ -331,7 +367,6 @@ public class ShowDeletedMessages {
                         + (candidates.isEmpty() ? "no match" : "ambiguous") + ". " + Utils.issue);
                 return;
             }
-
             HMethod.hookMethod(
                 ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER), candidates.get(0),
                 ArrayList.class, ArrayList.class, ArrayList.class, boolean.class, int.class,
@@ -409,15 +444,16 @@ public class ShowDeletedMessages {
             // Hook 5: removeDeletedMessagesFromNotifications
             Method removeFromNotif = null;
             for (Method m : ClassLoad.getClass(ClassNames.NOTIFICATIONS_CONTROLLER).getDeclaredMethods()) {
-                if (m.getName().equals(AutomationResolver.resolve("NotificationsController", "removeDeletedMessagesFromNotifications", AutomationResolver.ResolverType.Method))) {
+                if (m.getName().equals(AutomationResolver.resolve("NotificationsController",
+                        "removeDeletedMessagesFromNotifications", AutomationResolver.ResolverType.Method))) {
                     removeFromNotif = m; break;
                 }
             }
             if (removeFromNotif == null) {
                 Logger.w("ShowDeletedMessages: removeDeletedMessagesFromNotifications not found. " + Utils.issue);
             } else {
-                final Method finalRemove = removeFromNotif;
-                HMethod.hookMethod(finalRemove, new AbstractMethodHook() {
+                final Method fr = removeFromNotif;
+                HMethod.hookMethod(fr, new AbstractMethodHook() {
                     @Override
                     protected void beforeMethod(MethodHookParam param) {
                         if (ConfigManager.showDeletedMessages.isEnable()) param.setResult(null);
@@ -425,7 +461,7 @@ public class ShowDeletedMessages {
                 });
             }
 
-            // Hook 1: deleteMessages — mark FLAG_DELETED and register all IDs before original runs
+            // Hook 1: deleteMessages — mark FLAG_DELETED before original runs
             HMethod.hookMethod(
                 ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER),
                 AutomationResolver.resolve("MessagesController", "deleteMessages", AutomationResolver.ResolverType.Method),
@@ -454,19 +490,24 @@ public class ShowDeletedMessages {
 
             // Hook 4: postNotificationName for messagesDeleted
             //
-            // beforeMethod — strip preserved IDs so ChatActivity receives [] and removes
-            //   nothing from the adapter.
+            // beforeMethod — strip preserved IDs so ChatActivity sees [] and nothing
+            //   is removed from the adapter.
             //
-            // afterMethod — ChatActivity processed [] and did nothing about selection mode.
-            //   Fix by:
-            //   (a) finding ChatActivity via NotificationCenter.getObservers()
-            //   (b) clearing its selectedMessagesIds for preserved IDs
-            //   (c) calling hideActionMode() on the ActionBar
-            //   (d) refreshVisibleCells(): invalidates every visible child of the main
-            //       RecyclerView (circles vanish + X-in-timestamp redraws) and calls
-            //       notifyDataSetChanged() so onBindViewHolder fires (X-in-text applied).
-            //       The main RecyclerView is identified by the adapter with the most items,
-            //       using the androidx RecyclerView base class for obfuscation-safe detection.
+            // afterMethod — ChatActivity processed [] (did nothing about selection mode).
+            //   We fix this via two duck-typed operations:
+            //
+            //   hideActionMode(): scans every View field in ChatActivity and calls
+            //   hideActionMode() on each until one succeeds.  Telegram's ActionBar is the
+            //   only View that accepts this call.  This approach works even when ProGuard
+            //   has renamed the ActionBar class, because method names are preserved as
+            //   interface/protocol contracts called from throughout the codebase.
+            //
+            //   refreshVisibleCells(): scans every View field, finds RecyclerViews by
+            //   calling getAdapter() on each (only RV/LV have this method), picks the
+            //   largest adapter (= main chat list), then (a) invalidates all visible
+            //   children (immediate redraw — circles use cleared selectedMessagesIds,
+            //   X-in-timestamp drawn by measureTime hook) and (b) notifyDataSetChanged
+            //   (triggers onBindViewHolder — X-in-text applied by setMessageObject hook).
             HMethod.hookMethod(
                 ClassLoad.getClass(ClassNames.NOTIFICATION_CENTER),
                 AutomationResolver.resolve("NotificationCenter", "postNotificationName", AutomationResolver.ResolverType.Method),
