@@ -37,6 +37,11 @@ import com.my.televip.features.NoMessageLimit;
 import com.my.televip.features.NoFloodWait;
 import com.my.televip.features.UnlockGroupInput;
 import com.my.televip.features.SuppressBanKick;
+import com.my.televip.features.AntiContactSync;
+import com.my.televip.features.PrivacyForcer;
+import com.my.televip.features.SpoofDeviceInfo;
+import com.my.televip.features.MessageSchedulerBypass;
+import com.my.televip.features.UnlockTranslateButton;
 import com.my.televip.features.TelePremium;
 import com.my.televip.features.otherFeatures.AlwaysSaveMedia;
 import com.my.televip.features.otherFeatures.CopyNameHook;
@@ -125,6 +130,11 @@ public class ConfigManager {
     public static ConfigItem noFloodWait;
     public static ConfigItem unlockGroupInput;
     public static ConfigItem suppressBanKick;
+    public static ConfigItem antiContactSync;
+    public static ConfigItem privacyForcer;
+    public static ConfigItem spoofDeviceInfo;
+    public static ConfigItem messageSchedulerBypass;
+    public static ConfigItem unlockTranslateButton;
 
     // Button
     public static ConfigItem btnChannel;
@@ -225,6 +235,21 @@ public class ConfigManager {
 
             suppressBanKick = new ConfigItem(ConfigItem.SWITCH, Keys.SuppressBanKick, ConfigPreferences.getBoolean(Keys.SuppressBanKick), SuppressBanKick::init);
             items.add(suppressBanKick);
+
+            antiContactSync = new ConfigItem(ConfigItem.SWITCH, Keys.AntiContactSync, ConfigPreferences.getBoolean(Keys.AntiContactSync), AntiContactSync::init);
+            items.add(antiContactSync);
+
+            privacyForcer = new ConfigItem(ConfigItem.SWITCH, Keys.PrivacyForcer, ConfigPreferences.getBoolean(Keys.PrivacyForcer), PrivacyForcer::init);
+            items.add(privacyForcer);
+
+            spoofDeviceInfo = new ConfigItem(ConfigItem.SWITCH, Keys.SpoofDeviceInfo, ConfigPreferences.getBoolean(Keys.SpoofDeviceInfo), SpoofDeviceInfo::init);
+            items.add(spoofDeviceInfo);
+
+            messageSchedulerBypass = new ConfigItem(ConfigItem.SWITCH, Keys.MessageSchedulerBypass, ConfigPreferences.getBoolean(Keys.MessageSchedulerBypass), MessageSchedulerBypass::init);
+            items.add(messageSchedulerBypass);
+
+            unlockTranslateButton = new ConfigItem(ConfigItem.SWITCH, Keys.UnlockTranslateButton, ConfigPreferences.getBoolean(Keys.UnlockTranslateButton), UnlockTranslateButton::init);
+            items.add(unlockTranslateButton);
 
             items.add(shadows);
 
