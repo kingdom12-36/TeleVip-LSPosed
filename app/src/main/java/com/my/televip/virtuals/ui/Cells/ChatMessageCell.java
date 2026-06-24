@@ -288,7 +288,7 @@ public class ChatMessageCell {
             c.drawLine(size - pad, pad, pad, size - pad, p);
 
             BitmapDrawable drawable = new BitmapDrawable(
-                android.app.ActivityThread.currentApplication().getResources(), bmp);
+                android.content.res.Resources.getSystem(), bmp);
             drawable.setBounds(0, 0, size, size);
             return drawable;
         } catch (Throwable t) {
