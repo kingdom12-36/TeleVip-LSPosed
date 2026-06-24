@@ -63,4 +63,9 @@ public class ClassNames {
     public static final String SETTINGS_ACTIVITY_SETTING_CELL = "org.telegram.ui.SettingsActivity$SettingCell";
     public static final String UNIVERSAL_ADAPTER = "org.telegram.ui.Components.UniversalAdapter";
 
+    public static final String TL_USER_STATUS_OFFLINE = "org.telegram.tgnet.TLRPC$TL_userStatusOffline";
+    public static final String TL_USER_STATUS_RECENTLY = "org.telegram.tgnet.TLRPC$TL_userStatusRecently";
+    public static final String TL_USER_STATUS_LAST_WEEK = "org.telegram.tgnet.TLRPC$TL_userStatusLastWeek";
+    public static final String TL_USER_STATUS_LAST_MONTH = "org.telegram.tgnet.TLRPC$TL_userStatusLastMonth";
+
 }
