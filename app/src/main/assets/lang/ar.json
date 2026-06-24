@@ -106,5 +106,10 @@
   "NoMessageLimit": "إزالة حد عدد أحرف الرسالة",
   "NoFloodWait": "تجاوز مؤقت انتظار الخادم",
   "UnlockGroupInput": "فتح مربع الكتابة في المجموعات المقيدة",
-  "SuppressBanKick": "إخفاء إشعارات الحظر والطرد والكتم"
+  "SuppressBanKick": "إخفاء إشعارات الحظر والطرد والكتم",
+  "AntiContactSync": "الإخفاء عن مزامنة جهات الاتصال",
+  "PrivacyForcer": "فرض أقصى إعدادات الخصوصية",
+  "SpoofDeviceInfo": "تزوير معلومات الجهاز",
+  "MessageSchedulerBypass": "تجاوز قيود جدولة الرسائل",
+  "UnlockTranslateButton": "تفعيل زر الترجمة"
 }
