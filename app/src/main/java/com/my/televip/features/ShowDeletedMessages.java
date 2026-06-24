@@ -172,7 +172,36 @@ public class ShowDeletedMessages {
                             new AbstractMethodHook() {
                                 @Override
                                 protected void beforeMethod(MethodHookParam param) {
-                                    isDeleteMessage = true;
+                                    if (ConfigManager.showDeletedMessages != null
+                                            && ConfigManager.showDeletedMessages.isEnable()) {
+                                        // Feature ON: mark own deleted messages with FLAG_DELETED
+                                        // and DON'T set isDeleteMessage = true.
+                                        // This keeps isDeleteMessage = false, which causes:
+                                        //   - markMessagesAsDeleted to be blocked (message stays in DB)
+                                        //   - messagesDeleted notification to be blocked (stays in UI)
+                                        // The message stays in the chat with the X indicator.
+                                        try {
+                                            MessagesController mc = new MessagesController(param.thisObject);
+                                            ArrayList<Integer> msgIds = Utils.castList(param.args[0], Integer.class);
+                                            if (msgIds != null && !msgIds.isEmpty()) {
+                                                SparseArray<Object> byIds = mc.getDialogMessagesByIds();
+                                                for (int id : msgIds) {
+                                                    Object msgObj = byIds.get(id);
+                                                    if (msgObj != null) {
+                                                        TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
+                                                        owner.setFlags(owner.getFlags() | FLAG_DELETED);
+                                                        deletedIds.add(id);
+                                                    }
+                                                }
+                                            }
+                                        } catch (Throwable t) {
+                                            Logger.e(t);
+                                        }
+                                        // isDeleteMessage stays false — both downstream hooks will block
+                                    } else {
+                                        // Feature OFF: let the deletion proceed normally
+                                        isDeleteMessage = true;
+                                    }
                                 }
                             }
                     ));
