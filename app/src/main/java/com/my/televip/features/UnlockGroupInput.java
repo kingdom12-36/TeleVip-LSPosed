@@ -138,14 +138,18 @@ public class UnlockGroupInput {
                 Class<?> c = XposedHelpers.findClassIfExists(cls, Utils.classLoader);
                 if (c == null) continue;
 
-                // Hook the constructor so newly created objects start clean
-                XposedHelpers.hookAllConstructors(c, new AbstractMethodHook() {
-                    @Override
-                    protected void afterMethod(MethodHookParam param) {
-                        if (!ConfigManager.unlockGroupInput.isEnable()) return;
-                        try { XposedHelpers.setIntField(param.thisObject, "flags", 0); } catch (Throwable ignored) {}
-                    }
-                });
+                // Hook all constructors so newly created objects start clean
+                for (java.lang.reflect.Constructor<?> ctor : c.getDeclaredConstructors()) {
+                    try {
+                        de.robv.android.xposed.XposedBridge.hookMethod(ctor, new AbstractMethodHook() {
+                            @Override
+                            protected void afterMethod(MethodHookParam param) {
+                                if (!ConfigManager.unlockGroupInput.isEnable()) return;
+                                try { XposedHelpers.setIntField(param.thisObject, "flags", 0); } catch (Throwable ignored) {}
+                            }
+                        });
+                    } catch (Throwable ignored) {}
+                }
 
                 // Hook readParams (called when deserialising from server) — zero flags after read
                 for (String method : new String[]{"readParams", "readFrom", "deserializeResponse"}) {
@@ -164,3 +168,4 @@ public class UnlockGroupInput {
         }
     }
 }
+
