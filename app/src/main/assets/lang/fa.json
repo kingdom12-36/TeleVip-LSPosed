@@ -109,5 +109,6 @@
   "PrivacyForcer": "اعمال حداکثر تنظیمات حریم خصوصی",
   "SpoofDeviceInfo": "جعل اطلاعات دستگاه",
   "MessageSchedulerBypass": "دور زدن محدودیت‌های زمان‌بندی پیام",
-  "UnlockTranslateButton": "فعال کردن دکمه ترجمه"
+  "UnlockTranslateButton": "فعال کردن دکمه ترجمه",
+  "ShowRealLastSeen": "نمایش زمان واقعی آخرین بازدید"
 }
