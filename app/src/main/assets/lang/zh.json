@@ -104,5 +104,10 @@
   "NoMessageLimit": "取消消息字符数限制",
   "NoFloodWait": "绕过服务器洪水等待计时器",
   "UnlockGroupInput": "解锁受限群组中的聊天输入框",
-  "SuppressBanKick": "屏蔽封禁/踢出/禁言通知"
+  "SuppressBanKick": "屏蔽封禁/踢出/禁言通知",
+  "AntiContactSync": "隐藏手机号码同步扫描",
+  "PrivacyForcer": "强制最高隐私设置",
+  "SpoofDeviceInfo": "伪造设备信息",
+  "MessageSchedulerBypass": "绕过消息定时限制",
+  "UnlockTranslateButton": "解锁翻译按钮"
 }
