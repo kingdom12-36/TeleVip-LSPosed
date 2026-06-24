@@ -104,5 +104,10 @@
   "NoMessageLimit": "حذف محدودیت تعداد کاراکتر پیام",
   "NoFloodWait": "دور زدن تایمر انتظار سرور",
   "UnlockGroupInput": "باز کردن ورودی چت در گروه‌های محدودشده",
-  "SuppressBanKick": "پنهان کردن اعلان‌های بن، اخراج و سکوت"
+  "SuppressBanKick": "پنهان کردن اعلان‌های بن، اخراج و سکوت",
+  "AntiContactSync": "پنهان شدن از اسکن مخاطبان",
+  "PrivacyForcer": "اعمال حداکثر تنظیمات حریم خصوصی",
+  "SpoofDeviceInfo": "جعل اطلاعات دستگاه",
+  "MessageSchedulerBypass": "دور زدن محدودیت‌های زمان‌بندی پیام",
+  "UnlockTranslateButton": "فعال کردن دکمه ترجمه"
 }
