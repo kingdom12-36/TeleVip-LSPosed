@@ -5,6 +5,9 @@ import com.my.televip.base.AbstractMethodHook;
 import com.my.televip.logging.Logger;
 import com.my.televip.utils.Utils;
 
+import java.lang.reflect.Constructor;
+
+import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 
 /**
@@ -17,89 +20,98 @@ import de.robv.android.xposed.XposedHelpers;
  *
  *   messages.forwardMessages#c4f600c4
  *     flags:#
- *     ...
  *     drop_author:flags.11?true        ← bit 11
  *     drop_media_captions:flags.12?true
- *     ...
  *
- * IMPORTANT — why the old approach broke
- * ───────────────────────────────────────
- * We used to write directly to the `flags` int field before serializeToStream
- * ran.  In newer Telegram versions the method body starts with:
+ * WHY serializeToStream-only approaches break
+ * ─────────────────────────────────────────────
+ * In newer Telegram, serializeToStream recomputes flags FROM scratch:
  *
- *   flags = 0;               ← wipes our value!
- *   if (silent)   flags |= …
- *   if (drop_author) flags |= 2048   ← bit 11
- *   …
+ *   flags = 0;
+ *   if (drop_author) flags |= 2048;   ← bit 11
  *   stream.writeInt32(flags);
  *
- * So the int write was always overwritten.  Additionally, bit 9 (0x200) is
- * `grouped`, not drop_author — setting the wrong bit corrupted the request
- * and caused the forward to silently fail ("message vanishes").
+ * So:
+ *  • Setting the flags int in beforeMethod → wiped immediately by flags=0.
+ *  • Setting the boolean field in beforeMethod → works only if the boolean
+ *    field exists in this Telegram build.
  *
- * THE FIX
- * ───────
- * Set the *boolean field* `drop_author = true` on the object.  When
- * serializeToStream then recomputes flags from booleans, it naturally includes
- * drop_author.  We also fall back to the direct flags approach (with correct
- * bit 11) for older Telegram builds that don't have the boolean field.
+ * THE FIX (two-layer approach)
+ * ─────────────────────────────
+ * Layer 1 (primary): hook all constructors of TL_messages_forwardMessages.
+ *   afterMethod: set drop_author=true on the brand-new object.
+ *   This fires BEFORE serializeToStream, so even when flags is reset to 0,
+ *   the recomputation reads drop_author=true and sets bit 11 correctly.
+ *
+ * Layer 2 (fallback): hook serializeToStream beforeMethod.
+ *   Sets both the boolean field and flags bit 11 just in case the object
+ *   was created before our module loaded, or a Telegram build that doesn't
+ *   reset flags at the top of serializeToStream.
  */
 public class AnonymousForward {
 
     public static boolean isEnable = false;
 
-    // Correct bit positions per TL schema layer 170+
-    private static final int FLAG_DROP_AUTHOR         = 1 << 11;  // 0x800
-    private static final int FLAG_DROP_MEDIA_CAPTIONS = 1 << 12;  // 0x1000
+    private static final int FLAG_DROP_AUTHOR = 1 << 11;  // 0x800
+
+    private static final String[] CLASS_NAMES = {
+        "org.telegram.tgnet.TLRPC$TL_messages_forwardMessages",
+        "org.telegram.tgnet.tl.TL_messages$forwardMessages",
+        "org.telegram.tgnet.tl.TL_messages.forwardMessages",
+    };
 
     public static void init() {
         try {
             if (!isEnable) {
                 isEnable = true;
-                hookForwardClass("org.telegram.tgnet.TLRPC$TL_messages_forwardMessages");
-
-                // Fallback class names used in some Telegram forks
-                for (String alt : new String[]{
-                    "org.telegram.tgnet.tl.TL_messages$forwardMessages",
-                    "org.telegram.tgnet.tl.TL_messages.forwardMessages"
-                }) {
-                    Class<?> c = XposedHelpers.findClassIfExists(alt, Utils.classLoader);
-                    if (c != null) hookForwardClass(alt);
+                for (String name : CLASS_NAMES) {
+                    Class<?> cls = XposedHelpers.findClassIfExists(name, Utils.classLoader);
+                    if (cls != null) hookForwardClass(cls);
                 }
             }
         } catch (Throwable e) { Logger.e(e); }
     }
 
-    private static void hookForwardClass(String className) {
-        try {
-            Class<?> cls = XposedHelpers.findClassIfExists(className, Utils.classLoader);
-            if (cls == null) return;
+    private static void hookForwardClass(Class<?> cls) {
+        // ── Layer 1: Constructor hook (primary) ──────────────────────────────
+        // Fires right after the TL object is allocated. Setting drop_author
+        // here guarantees it is true when serializeToStream later runs —
+        // even if that method starts with "flags = 0".
+        for (Constructor<?> ctor : cls.getDeclaredConstructors()) {
+            try {
+                XposedBridge.hookMethod(ctor, new AbstractMethodHook() {
+                    @Override
+                    protected void afterMethod(MethodHookParam param) {
+                        if (!ConfigManager.anonymousForward.isEnable()) return;
+                        try {
+                            XposedHelpers.setBooleanField(param.thisObject, "drop_author", true);
+                        } catch (Throwable ignored) {
+                            // Field absent in this build — Layer 2 handles it.
+                        }
+                    }
+                });
+            } catch (Throwable t) { Logger.e(t); }
+        }
 
+        // ── Layer 2: serializeToStream hook (fallback) ───────────────────────
+        // Handles builds where the object may have been constructed before our
+        // module was loaded, and older builds that don't reset flags to 0.
+        try {
             XposedHelpers.findAndHookMethod(cls, "serializeToStream",
                 "org.telegram.tgnet.AbstractSerializedData",
                 new AbstractMethodHook() {
                     @Override
                     protected void beforeMethod(MethodHookParam param) {
                         if (!ConfigManager.anonymousForward.isEnable()) return;
-
-                        // ── Primary (newer Telegram): set the boolean field ────────
-                        // serializeToStream resets `flags` to 0 then recomputes it
-                        // from boolean fields, so we must set the boolean — not the int.
-                        boolean boolSet = false;
+                        // Try boolean field first (newer Telegram).
                         try {
                             XposedHelpers.setBooleanField(param.thisObject, "drop_author", true);
-                            boolSet = true;
                         } catch (Throwable ignored) {}
-
-                        // ── Fallback (older Telegram): set flags int directly ──────
-                        // Only used if the boolean field does not exist.
-                        if (!boolSet) {
-                            try {
-                                int flags = XposedHelpers.getIntField(param.thisObject, "flags");
-                                flags |= FLAG_DROP_AUTHOR;
-                                XposedHelpers.setIntField(param.thisObject, "flags", flags);
-                            } catch (Throwable ignored) {}
-                        }
+                        // Also set bit 11 directly (older Telegram without flags reset).
+                        try {
+                            int flags = XposedHelpers.getIntField(param.thisObject, "flags");
+                            XposedHelpers.setIntField(param.thisObject, "flags", flags | FLAG_DROP_AUTHOR);
+                        } catch (Throwable ignored) {}
                     }
                 });
         } catch (Throwable t) { Logger.e(t); }
