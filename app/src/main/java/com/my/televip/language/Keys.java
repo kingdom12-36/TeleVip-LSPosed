@@ -119,4 +119,8 @@ public class Keys {
     public static final String NoFloodWait             = "NoFloodWait";
     public static final String UnlockGroupInput        = "UnlockGroupInput";
     public static final String SuppressBanKick         = "SuppressBanKick";
+
+    // Latest features
+    public static final String MessageSchedulerBypass  = "MessageSchedulerBypass";
+    public static final String UnlockTranslateButton   = "UnlockTranslateButton";
 }
