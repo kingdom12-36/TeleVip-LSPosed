@@ -111,5 +111,6 @@
   "PrivacyForcer": "Force maximum privacy settings",
   "SpoofDeviceInfo": "Spoof device info",
   "MessageSchedulerBypass": "Bypass message scheduler restrictions",
-  "UnlockTranslateButton": "Unlock translate button"
+  "UnlockTranslateButton": "Unlock translate button",
+  "ShowRealLastSeen": "Show real last seen time"
 }
