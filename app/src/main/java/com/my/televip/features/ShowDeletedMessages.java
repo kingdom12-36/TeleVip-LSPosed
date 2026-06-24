@@ -32,6 +32,8 @@ public class ShowDeletedMessages {
 
     public static boolean isEnable = false;
 
+    public static final CopyOnWriteArrayList<Integer> deletedIds = new CopyOnWriteArrayList<>();
+
     public static void markMessagesDeletedForController(MessagesStorage messagesStorage, long dialogId, ArrayList<Integer> delMsg) {
         MessageStorage.markMessagesDeleted(messagesStorage, dialogId, delMsg);
     }
