@@ -1,7 +1,5 @@
 package com.my.televip.features;
 
-import android.util.SparseArray;
-
 import com.my.televip.Class.ClassLoad;
 import com.my.televip.Class.ClassNames;
 import com.my.televip.Configs.ConfigManager;
@@ -23,6 +21,8 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+
+import de.robv.android.xposed.XposedHelpers;
 
 public class ShowDeletedMessages {
 
@@ -84,20 +84,37 @@ public class ShowDeletedMessages {
 
                                             markMessagesDeletedForController(messagesController.getMessagesStorage(), -channelMessages.getChannelID(), channelMessages.getMessages());
                                         }
-                                        if (item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_MESSAGES))) {
 
+                                        if (item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_MESSAGES))) {
                                             ArrayList<Integer> messages = new TLRPC.TL_updateDeleteMessages(item).getMessages();
-                                            SparseArray<Object> dialogMessages = messagesController.getDialogMessagesByIds();
-                                            for (int id : messages) {
-                                                Object msgObj = dialogMessages.get(id);
-                                                if (msgObj == null) {
-                                                    break;
-                                                } else {
-                                                    TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
-                                                    owner.setFlags(owner.getFlags() | FLAG_DELETED);
+                                            if (messages != null) {
+                                                // Scan ALL loaded dialogs to mark every deleted message.
+                                                // dialogMessagesByIds only holds the latest message per dialog,
+                                                // so a batch delete would miss all but the last — same fix
+                                                // as the channel path above uses dialogMessage directly.
+                                                LongSparseArray allDialogs = messagesController.getDialogMessage();
+                                                for (int di = 0; di < allDialogs.size(); di++) {
+                                                    ArrayList<Object> dMsgs = allDialogs.get(allDialogs.keyAt(di));
+                                                    if (dMsgs == null) continue;
+                                                    for (Object msgObj : dMsgs) {
+                                                        try {
+                                                            TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
+                                                            if (messages.contains(owner.getID())) {
+                                                                owner.setFlags(owner.getFlags() | FLAG_DELETED);
+                                                            }
+                                                        } catch (Throwable ignored) {}
+                                                    }
                                                 }
+                                                markMessagesDeletedForController(messagesController.getMessagesStorage(), 0, messages);
+
+                                                // Pass through the update with an EMPTY messages list.
+                                                // Telegram sees the server ack and immediately exits selection
+                                                // mode, but processes zero removals from the adapter —
+                                                // all messages stay visible with the X indicator.
+                                                XposedHelpers.setObjectField(item, "messages", new ArrayList<Integer>());
+                                                isDeleteMessage = true; // let the resulting messagesDeleted([]) notification through
                                             }
-                                            markMessagesDeletedForController(messagesController.getMessagesStorage(), 0, messages);
+                                            newUpdates.add(item);
                                         }
 
                                     }
@@ -175,29 +192,39 @@ public class ShowDeletedMessages {
                                     if (ConfigManager.showDeletedMessages != null
                                             && ConfigManager.showDeletedMessages.isEnable()) {
                                         // Feature ON: mark own deleted messages with FLAG_DELETED
-                                        // and DON'T set isDeleteMessage = true.
-                                        // This keeps isDeleteMessage = false, which causes:
-                                        //   - markMessagesAsDeleted to be blocked (message stays in DB)
-                                        //   - messagesDeleted notification to be blocked (stays in UI)
-                                        // The message stays in the chat with the X indicator.
+                                        // across ALL loaded dialogs (not just dialogMessagesByIds,
+                                        // which only holds one message per dialog and would miss
+                                        // every message except the latest in a batch delete).
                                         try {
                                             MessagesController mc = new MessagesController(param.thisObject);
                                             ArrayList<Integer> msgIds = Utils.castList(param.args[0], Integer.class);
                                             if (msgIds != null && !msgIds.isEmpty()) {
-                                                SparseArray<Object> byIds = mc.getDialogMessagesByIds();
-                                                for (int id : msgIds) {
-                                                    Object msgObj = byIds.get(id);
-                                                    if (msgObj != null) {
-                                                        TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
-                                                        owner.setFlags(owner.getFlags() | FLAG_DELETED);
-                                                        deletedIds.add(id);
+                                                LongSparseArray allDialogs = mc.getDialogMessage();
+                                                for (int di = 0; di < allDialogs.size(); di++) {
+                                                    ArrayList<Object> dMsgs = allDialogs.get(allDialogs.keyAt(di));
+                                                    if (dMsgs == null) continue;
+                                                    for (Object msgObj : dMsgs) {
+                                                        try {
+                                                            TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
+                                                            int msgId = owner.getID();
+                                                            if (msgIds.contains(msgId)) {
+                                                                owner.setFlags(owner.getFlags() | FLAG_DELETED);
+                                                                if (!deletedIds.contains(msgId)) {
+                                                                    deletedIds.add(msgId);
+                                                                }
+                                                            }
+                                                        } catch (Throwable ignored) {}
                                                     }
                                                 }
                                             }
                                         } catch (Throwable t) {
                                             Logger.e(t);
                                         }
-                                        // isDeleteMessage stays false — both downstream hooks will block
+                                        // isDeleteMessage stays false:
+                                        //   markMessagesAsDeleted → blocked (messages stay in DB)
+                                        //   messagesDeleted notification → blocked (messages stay in adapter)
+                                        // The processUpdateArray hook handles the selection-mode exit
+                                        // by passing through an emptied TL_updateDeleteMessages ack.
                                     } else {
                                         // Feature OFF: let the deletion proceed normally
                                         isDeleteMessage = true;
