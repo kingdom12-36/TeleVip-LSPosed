@@ -123,4 +123,9 @@ public class Keys {
     // Latest features
     public static final String MessageSchedulerBypass  = "MessageSchedulerBypass";
     public static final String UnlockTranslateButton   = "UnlockTranslateButton";
+
+    // Privacy & Identity
+    public static final String AntiContactSync = "AntiContactSync";
+    public static final String SpoofDeviceInfo = "SpoofDeviceInfo";
+    public static final String PrivacyForcer   = "PrivacyForcer";
 }
