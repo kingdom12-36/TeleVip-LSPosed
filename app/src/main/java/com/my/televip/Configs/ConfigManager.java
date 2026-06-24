@@ -4,6 +4,11 @@ import android.content.Context;
 
 import com.my.televip.ClientChecker;
 import com.my.televip.Clients.Telegraph;
+import com.my.televip.features.AntiContactSync;
+import com.my.televip.features.AnonymousForward;
+import com.my.televip.features.AntiPhoneCall;
+import com.my.televip.features.BypassReactionsView;
+import com.my.televip.features.BypassSeenBy;
 import com.my.televip.features.BypassSlowMode;
 import com.my.televip.features.DisableChannelSwipeBack;
 import com.my.televip.features.DisableNumberRounding;
@@ -12,37 +17,35 @@ import com.my.televip.features.DisableStories;
 import com.my.televip.features.DownloadSpeed;
 import com.my.televip.features.EnableSavingStories;
 import com.my.televip.features.FixTLError;
+import com.my.televip.features.GhostEdit;
 import com.my.televip.features.GhostMode;
 import com.my.televip.features.HidePhone;
 import com.my.televip.features.HidePinnedMessages;
 import com.my.televip.features.HideProxySponsor;
 import com.my.televip.features.HideUpdateApp;
 import com.my.televip.features.HijriDate;
+import com.my.televip.features.IgnoreBlocked;
+import com.my.televip.features.MessageSchedulerBypass;
+import com.my.televip.features.NoFloodWait;
+import com.my.televip.features.NoForwardRestriction;
+import com.my.televip.features.NoMessageLimit;
+import com.my.televip.features.NoSponsoredMessages;
 import com.my.televip.features.PreventMedia;
+import com.my.televip.features.PrivacyForcer;
 import com.my.televip.features.RemovesContentSaving;
 import com.my.televip.features.SaveEditsHistory;
-import com.my.televip.features.ShowMessageDetails;
-import com.my.televip.features.SecretMediaSave;
-import com.my.televip.features.AntiPhoneCall;
-import com.my.televip.features.TeleVipAi;
-import com.my.televip.features.NoForwardRestriction;
-import com.my.televip.features.IgnoreBlocked;
-import com.my.televip.features.NoSponsoredMessages;
-import com.my.televip.features.ShowDeletedMessages;
-import com.my.televip.features.ShowReactionsList;
-import com.my.televip.features.ShowOthersPhone;
-import com.my.televip.features.GhostEdit;
-import com.my.televip.features.BypassReactionsView;
 import com.my.televip.features.SaveToSavedMessages;
-import com.my.televip.features.BypassSeenBy;
 import com.my.televip.features.ScreenshotBypass;
-import com.my.televip.features.AnonymousForward;
-import com.my.televip.features.NoMessageLimit;
-import com.my.televip.features.NoFloodWait;
-import com.my.televip.features.UnlockGroupInput;
+import com.my.televip.features.SecretMediaSave;
+import com.my.televip.features.ShowDeletedMessages;
+import com.my.televip.features.ShowMessageDetails;
+import com.my.televip.features.ShowOthersPhone;
+import com.my.televip.features.ShowReactionsList;
+import com.my.televip.features.SpoofDeviceInfo;
 import com.my.televip.features.SuppressBanKick;
 import com.my.televip.features.TelePremium;
-import com.my.televip.features.MessageSchedulerBypass;
+import com.my.televip.features.TeleVipAi;
+import com.my.televip.features.UnlockGroupInput;
 import com.my.televip.features.UnlockTranslateButton;
 import com.my.televip.features.otherFeatures.AlwaysSaveMedia;
 import com.my.televip.features.otherFeatures.CopyNameHook;
@@ -57,10 +60,8 @@ import java.util.List;
 
 
 public class ConfigManager {
-    
 
     private static final List<ConfigItem> items = new ArrayList<>();
-
 
     // GhostMode
     public static ConfigItem ghostModeSettings;
@@ -95,7 +96,7 @@ public class ConfigManager {
     public static ConfigItem preventMedia;
     public static ConfigItem enableSavingStories;
 
-    //UI
+    // UI
     public static ConfigItem ui;
     public static ConfigItem hidePinnedMessages;
     public static ConfigItem disableChannelSwipeBack;
@@ -119,11 +120,10 @@ public class ConfigManager {
     public static ConfigItem noForwardRestriction;
     public static ConfigItem showReactionsList;
     public static ConfigItem antiPhoneCall;
-
     public static ConfigItem ignoreBlocked;
     public static ConfigItem teleVipAi;
 
-    // New features
+    // New features (batch 2)
     public static ConfigItem showOthersPhone;
     public static ConfigItem ghostEdit;
     public static ConfigItem bypassReactionsView;
@@ -140,11 +140,16 @@ public class ConfigManager {
     public static ConfigItem messageSchedulerBypass;
     public static ConfigItem unlockTranslateButton;
 
+    // Privacy & Identity
+    public static ConfigItem antiContactSync;
+    public static ConfigItem spoofDeviceInfo;
+    public static ConfigItem privacyForcer;
+
     // Button
     public static ConfigItem btnChannel;
     public static ConfigItem btnRestartApp;
 
-    public static void loadAndRead(Context context){
+    public static void loadAndRead(Context context) {
         ConfigPreferences.init();
         load(context);
         readFeature(context);
@@ -175,6 +180,15 @@ public class ConfigManager {
 
         showOthersPhone = new ConfigItem(ConfigItem.SWITCH, Keys.ShowOthersPhone, ConfigPreferences.getBoolean(Keys.ShowOthersPhone), () -> ShowOthersPhone.init(context));
         items.add(showOthersPhone);
+
+        antiContactSync = new ConfigItem(ConfigItem.SWITCH, Keys.AntiContactSync, ConfigPreferences.getBoolean(Keys.AntiContactSync), AntiContactSync::init);
+        items.add(antiContactSync);
+
+        spoofDeviceInfo = new ConfigItem(ConfigItem.SWITCH, Keys.SpoofDeviceInfo, ConfigPreferences.getBoolean(Keys.SpoofDeviceInfo), SpoofDeviceInfo::init);
+        items.add(spoofDeviceInfo);
+
+        privacyForcer = new ConfigItem(ConfigItem.SWITCH, Keys.PrivacyForcer, ConfigPreferences.getBoolean(Keys.PrivacyForcer), PrivacyForcer::init);
+        items.add(privacyForcer);
 
         onlineInfo = new ConfigItem(ConfigItem.INFO, Keys.OfflineVisibilityInfo);
         items.add(onlineInfo);
@@ -375,13 +389,12 @@ public class ConfigManager {
         }
     }
 
-    public static boolean isGhostMode(){
+    public static boolean isGhostMode() {
         return hideSeen.isEnable() ||
                 hideStoryView.isEnable() ||
                 hideTyping.isEnable() ||
                 hideOnline.isEnable() ||
                 markReadAfterSend.isEnable();
-
     }
 
 }
