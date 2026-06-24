@@ -30,6 +30,7 @@ import com.my.televip.features.IgnoreBlocked;
 import com.my.televip.features.NoSponsoredMessages;
 import com.my.televip.features.ShowDeletedMessages;
 import com.my.televip.features.ShowOthersPhone;
+import com.my.televip.features.ShowRealLastSeen;
 import com.my.televip.features.BypassSeenBy;
 import com.my.televip.features.ScreenshotBypass;
 import com.my.televip.features.AnonymousForward;
@@ -123,6 +124,7 @@ public class ConfigManager {
 
     // New features
     public static ConfigItem showOthersPhone;
+    public static ConfigItem showRealLastSeen;
     public static ConfigItem bypassSeenBy;
     public static ConfigItem screenshotBypass;
     public static ConfigItem anonymousForward;
@@ -171,6 +173,9 @@ public class ConfigManager {
 
         showOthersPhone = new ConfigItem(ConfigItem.SWITCH, Keys.ShowOthersPhone, ConfigPreferences.getBoolean(Keys.ShowOthersPhone), () -> ShowOthersPhone.init(context));
         items.add(showOthersPhone);
+
+        showRealLastSeen = new ConfigItem(ConfigItem.SWITCH, Keys.ShowRealLastSeen, ConfigPreferences.getBoolean(Keys.ShowRealLastSeen), ShowRealLastSeen::init);
+        items.add(showRealLastSeen);
 
         onlineInfo = new ConfigItem(ConfigItem.INFO, Keys.OfflineVisibilityInfo);
         items.add(onlineInfo);
