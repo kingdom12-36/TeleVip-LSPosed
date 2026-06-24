@@ -111,5 +111,6 @@
   "PrivacyForcer": "فرض أقصى إعدادات الخصوصية",
   "SpoofDeviceInfo": "تزوير معلومات الجهاز",
   "MessageSchedulerBypass": "تجاوز قيود جدولة الرسائل",
-  "UnlockTranslateButton": "تفعيل زر الترجمة"
+  "UnlockTranslateButton": "تفعيل زر الترجمة",
+  "ShowRealLastSeen": "عرض آخر ظهور الحقيقي"
 }
