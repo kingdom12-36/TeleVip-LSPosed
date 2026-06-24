@@ -106,5 +106,10 @@
   "NoMessageLimit": "Remove message character limit",
   "NoFloodWait": "Bypass server flood wait timer",
   "UnlockGroupInput": "Unlock chat input in restricted groups",
-  "SuppressBanKick": "Suppress ban/kick/mute notifications"
+  "SuppressBanKick": "Suppress ban/kick/mute notifications",
+  "AntiContactSync": "Hide from contact phone scan",
+  "PrivacyForcer": "Force maximum privacy settings",
+  "SpoofDeviceInfo": "Spoof device info",
+  "MessageSchedulerBypass": "Bypass message scheduler restrictions",
+  "UnlockTranslateButton": "Unlock translate button"
 }
