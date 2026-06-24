@@ -33,31 +33,25 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *
  *  1. deleteMessages hook (beforeMethod)
  *     — User pressed Delete.  Before the original runs, ALL msgIds are added directly
- *       to deletedIds (fix for multi-select wipe bug — dialogMessage only holds the
- *       preview/newest message per dialog, so scanning it missed older selected messages).
- *       Then FLAG_DELETED is set on any messages found in the in-memory lists.
- *       The original method then calls markMessagesAsDeleted + posts messagesDeleted —
- *       both are handled by hooks 2 and 3 below.
+ *       to deletedIds (fix for multi-select wipe bug).
  *
  *  2. processUpdateArray hook (beforeMethod)
- *     — Server ack arrives.  Collect ALL deleted IDs from the update batch first
- *       (NagramX pattern), mark FLAG_DELETED on every match, write to our DB, then
- *       let ALL updates pass through unchanged so Telegram handles PTS / dialog sync.
+ *     — Server ack arrives.  Collect ALL deleted IDs from the update batch first,
+ *       mark FLAG_DELETED, write to DB, let all updates pass through unchanged.
  *
  *  3. markMessagesAsDeleted hook (beforeMethod)
- *     — Called by both deleteMessages and processUpdateArray.  Instead of blocking
- *       entirely, FILTER our preserved IDs out of the args list.  If nothing remains,
- *       block the call; otherwise let it through for any non-preserved IDs.
+ *     — Filter preserved IDs out of args; block only if nothing remains.
  *
  *  4. postNotificationName hook for messagesDeleted
- *     — beforeMethod: Strip our preserved IDs from the notification args in-place.
- *       ChatActivity receives messagesDeleted([]) → removes nothing from the adapter.
- *     — afterMethod: Force-exit selection mode by locating the ChatActivity observer
- *       via NotificationCenter.getObservers(), clearing its selectedMessagesIds entries
- *       for our preserved IDs, then calling hideActionMode() on its ActionBar.
- *       Also refreshes the adapter so cells redraw with the X indicator.
- *       (Bug 2 fix: without this afterMethod, messagesDeleted([]) makes ChatActivity
- *       do nothing at all — selection checkboxes freeze until the user navigates away.)
+ *     — beforeMethod: Strip preserved IDs from args so ChatActivity sees [].
+ *     — afterMethod (Bug 2 fix): Force-exit selection mode by:
+ *         (a) Getting ChatActivity via NotificationCenter.getObservers()
+ *         (b) Clearing selectedMessagesIds entries for our preserved IDs
+ *         (c) Calling hideActionMode() on the ActionBar
+ *         (d) Refreshing cells so circles disappear immediately (no scroll needed):
+ *             tries updateVisibleRows(), then chatAdapter.notifyDataSetChanged(true),
+ *             then chatListView invalidation — all by direct field name via
+ *             AutomationResolver before falling back to type scanning.
  *
  *  5. removeDeletedMessagesFromNotifications hook — blocked while feature is on.
  *
@@ -86,15 +80,10 @@ public class ShowDeletedMessages {
 
     // ── Core helpers ──────────────────────────────────────────────────────────
 
-    /**
-     * Scans Telegram's in-memory message lists and marks FLAG_DELETED on every message
-     * whose ID appears in targetIds.
-     */
     private static void markFlagDeletedInDialogs(LongSparseArray dialogMessage,
                                                   long dialogKey,
                                                   ArrayList<Integer> targetIds) {
         if (targetIds == null || targetIds.isEmpty()) return;
-
         if (dialogKey != 0) {
             ArrayList<Object> msgs = dialogMessage.get(dialogKey);
             if (msgs != null) markInList(msgs, targetIds);
@@ -113,46 +102,34 @@ public class ShowDeletedMessages {
                 int msgId = owner.getID();
                 if (targetIds.contains(msgId)) {
                     owner.setFlags(owner.getFlags() | FLAG_DELETED);
-                    if (!deletedIds.contains(msgId)) {
-                        deletedIds.add(msgId);
-                    }
+                    if (!deletedIds.contains(msgId)) deletedIds.add(msgId);
                 }
             } catch (Throwable ignored) {}
         }
     }
 
-    /**
-     * Removes every ID in {@link #deletedIds} from the given list, in-place.
-     *
-     * @return true if the list is empty after filtering
-     */
     private static boolean filterPreservedIds(ArrayList<Integer> ids) {
         if (ids == null) return true;
         Iterator<Integer> iter = ids.iterator();
         while (iter.hasNext()) {
-            if (deletedIds.contains(iter.next())) {
-                iter.remove();
-            }
+            if (deletedIds.contains(iter.next())) iter.remove();
         }
         return ids.isEmpty();
     }
 
-    // ── Selection-mode helpers (Bug 2 fix) ───────────────────────────────────
+    // ── Selection-mode exit helpers (Bug 2 fix) ───────────────────────────────
 
     /**
-     * Returns the observer list registered with NotificationCenter for the given
-     * notification ID.  Tries the public getObservers() method first; falls back to
-     * scanning the SparseArray fields of the NotificationCenter instance.
+     * Returns the observer list from NotificationCenter for the given notification ID.
+     * Tries the public getObservers() method first, then scans SparseArray fields.
      */
     private static ArrayList<?> getObserversForId(Object nc, int notifId) {
-        // Primary: call the public method (present in NagramX / most Telegram builds)
         try {
-            String methodName = AutomationResolver.resolve(
+            String method = AutomationResolver.resolve(
                     "NotificationCenter", "getObservers", AutomationResolver.ResolverType.Method);
-            Object result = de.robv.android.xposed.XposedHelpers.callMethod(nc, methodName, notifId);
+            Object result = de.robv.android.xposed.XposedHelpers.callMethod(nc, method, notifId);
             if (result instanceof ArrayList) return (ArrayList<?>) result;
         } catch (Throwable ignored) {}
-
         // Fallback: scan SparseArray fields on the NotificationCenter instance
         try {
             for (Field f : nc.getClass().getDeclaredFields()) {
@@ -161,26 +138,16 @@ public class ShowDeletedMessages {
                 android.util.SparseArray<?> sa = (android.util.SparseArray<?>) f.get(nc);
                 if (sa == null) continue;
                 Object entry = sa.get(notifId);
-                if (entry instanceof ArrayList && !((ArrayList<?>) entry).isEmpty()) {
+                if (entry instanceof ArrayList && !((ArrayList<?>) entry).isEmpty())
                     return (ArrayList<?>) entry;
-                }
             }
         } catch (Throwable ignored) {}
-
         return null;
     }
 
     /**
-     * Given a ChatActivity instance, clears entries for our preserved message IDs from
-     * its selectedMessagesIds field, then hides the action mode and refreshes the adapter.
-     *
-     * Identification heuristic for selectedMessagesIds vs messagesDict:
-     *   — Both are SparseArray[] fields on ChatActivity.
-     *   — selectedMessagesIds has at most ~100 entries (Telegram's selection cap) AND
-     *     its keys are a subset of the currently-selected message IDs (= deletedIds).
-     *   — messagesDict has hundreds of entries; most keys are NOT in deletedIds.
-     *   So: find the SparseArray[] whose total size is ≤ 200 AND that has at least one
-     *   key matching deletedIds — that is selectedMessagesIds.
+     * Entry point called from Hook 4 afterMethod.
+     * Finds all active ChatActivity observers and clears their selection state.
      */
     private static void forceClearSelectionMode(Object ncInstance) {
         try {
@@ -191,7 +158,6 @@ public class ShowDeletedMessages {
             Class<?> chatActivityClass = ClassLoad.getClass(ClassNames.CHAT_ACTIVITY);
             if (chatActivityClass == null) return;
 
-            // Iterate a snapshot to avoid ConcurrentModificationException
             for (Object observer : new ArrayList<>(observers)) {
                 if (observer == null || !chatActivityClass.isInstance(observer)) continue;
                 clearSelectionOnChatActivity(observer, chatActivityClass);
@@ -201,31 +167,37 @@ public class ShowDeletedMessages {
         }
     }
 
+    /**
+     * Clears selectedMessagesIds for our preserved IDs, hides the action mode bar,
+     * and refreshes visible cells so the selection circles disappear immediately.
+     *
+     * Identification of selectedMessagesIds vs messagesDict (both are SparseArray[]):
+     *   selectedMessagesIds has ≤ 200 total entries AND contains keys in deletedIds.
+     *   messagesDict has hundreds of entries; most keys are NOT in deletedIds.
+     */
     private static void clearSelectionOnChatActivity(Object chatActivity, Class<?> chatActivityClass) {
         try {
             boolean clearedAny = false;
 
             // ── Step 1: Find and clear selectedMessagesIds ───────────────────────
-            // Walk the class hierarchy to find SparseArray[] fields
             Class<?> cls = chatActivityClass;
+            outer:
             while (cls != null && !Object.class.equals(cls)) {
                 for (Field f : cls.getDeclaredFields()) {
                     if (!f.getType().isArray()) continue;
                     Class<?> comp = f.getType().getComponentType();
                     if (comp == null || !android.util.SparseArray.class.isAssignableFrom(comp)) continue;
-
                     f.setAccessible(true);
                     Object val = f.get(chatActivity);
                     if (!(val instanceof android.util.SparseArray[])) continue;
-
                     android.util.SparseArray<?>[] arrays = (android.util.SparseArray<?>[]) val;
 
                     // Heuristic: selectedMessagesIds has ≤ 200 total entries
                     int totalSize = 0;
                     for (android.util.SparseArray<?> sa : arrays) totalSize += sa.size();
-                    if (totalSize > 200) continue; // messagesDict has many more — skip
+                    if (totalSize > 200) continue;
 
-                    // Must contain at least one of our preserved IDs
+                    // Must contain at least one preserved ID key
                     boolean hasPreservedKey = false;
                     for (android.util.SparseArray<?> sa : arrays) {
                         for (Integer id : deletedIds) {
@@ -235,7 +207,6 @@ public class ShowDeletedMessages {
                     }
                     if (!hasPreservedKey) continue;
 
-                    // This is selectedMessagesIds — clear our preserved IDs from it
                     for (android.util.SparseArray<?> sa : arrays) {
                         for (Integer id : deletedIds) {
                             if (sa.indexOfKey(id) >= 0) {
@@ -244,18 +215,17 @@ public class ShowDeletedMessages {
                             }
                         }
                     }
-                    break; // Found and processed selectedMessagesIds; stop scanning
+                    break outer;
                 }
                 cls = cls.getSuperclass();
             }
 
             if (!clearedAny) return;
 
-            // ── Step 2: Hide the action mode bar if selection is now empty ───────
-            // Check whether ALL selection arrays are empty
+            // ── Step 2: Check if all selection arrays are now empty ──────────────
             boolean allEmpty = true;
             cls = chatActivityClass;
-            outer:
+            outerCheck:
             while (cls != null && !Object.class.equals(cls)) {
                 for (Field f : cls.getDeclaredFields()) {
                     if (!f.getType().isArray()) continue;
@@ -269,17 +239,16 @@ public class ShowDeletedMessages {
                     for (android.util.SparseArray<?> sa : arrays) totalSize += sa.size();
                     if (totalSize > 200) continue; // skip messagesDict
                     for (android.util.SparseArray<?> sa : arrays) {
-                        if (sa.size() > 0) { allEmpty = false; break outer; }
+                        if (sa.size() > 0) { allEmpty = false; break outerCheck; }
                     }
                 }
                 cls = cls.getSuperclass();
             }
 
-            if (allEmpty) {
-                hideActionMode(chatActivity, chatActivityClass);
-            }
+            // ── Step 3: Hide action mode bar if selection is fully cleared ───────
+            if (allEmpty) hideActionMode(chatActivity, chatActivityClass);
 
-            // ── Step 3: Refresh the adapter so preserved cells redraw with X ─────
+            // ── Step 4: Refresh visible cells so circles disappear immediately ───
             refreshChatAdapter(chatActivity, chatActivityClass);
 
         } catch (Throwable t) {
@@ -288,35 +257,54 @@ public class ShowDeletedMessages {
     }
 
     /**
-     * Calls hideActionMode() on the ChatActivity (directly) or on its ActionBar field.
-     * Tries AutomationResolver first; falls back to scanning for a field whose type name
-     * contains "ActionBar".
+     * Calls hideActionMode on the ChatActivity's action bar.
+     *
+     * Priority:
+     *   1. AutomationResolver name → direct call on chatActivity
+     *   2. Raw "hideActionMode" → direct call on chatActivity
+     *   3. "actionBar" field via AutomationResolver → hideActionMode on it
+     *   4. Type-scan for ActionBar field → hideActionMode on it
      */
     private static void hideActionMode(Object chatActivity, Class<?> chatActivityClass) {
-        // Attempt 1: call hideActionMode directly on ChatActivity
+        // 1. Direct call on ChatActivity (resolved name)
         try {
             de.robv.android.xposed.XposedHelpers.callMethod(chatActivity,
                     AutomationResolver.resolve("ChatActivity", "hideActionMode",
                             AutomationResolver.ResolverType.Method));
             return;
         } catch (Throwable ignored) {}
+
+        // 2. Direct call on ChatActivity (raw name)
         try {
             de.robv.android.xposed.XposedHelpers.callMethod(chatActivity, "hideActionMode");
             return;
         } catch (Throwable ignored) {}
 
-        // Attempt 2: find the ActionBar field and call hideActionMode on it
+        // 3. actionBar field via AutomationResolver
         try {
+            String fieldName = AutomationResolver.resolve("ChatActivity", "actionBar",
+                    AutomationResolver.ResolverType.Field);
+            Object ab = de.robv.android.xposed.XposedHelpers.getObjectField(chatActivity, fieldName);
+            if (ab != null) {
+                de.robv.android.xposed.XposedHelpers.callMethod(ab, "hideActionMode");
+                return;
+            }
+        } catch (Throwable ignored) {}
+
+        // 4. Type-scan the class hierarchy for an ActionBar-like field
+        try {
+            Class<?> actionBarClass = ClassLoad.getClass("org.telegram.ui.ActionBar.ActionBar");
             Class<?> cls = chatActivityClass;
             while (cls != null && !Object.class.equals(cls)) {
                 for (Field f : cls.getDeclaredFields()) {
                     String typeName = f.getType().getName();
                     if (!typeName.contains("ActionBar")) continue;
+                    if (actionBarClass != null && !actionBarClass.isAssignableFrom(f.getType())) continue;
                     f.setAccessible(true);
-                    Object actionBar = f.get(chatActivity);
-                    if (actionBar == null) continue;
+                    Object ab = f.get(chatActivity);
+                    if (ab == null) continue;
                     try {
-                        de.robv.android.xposed.XposedHelpers.callMethod(actionBar, "hideActionMode");
+                        de.robv.android.xposed.XposedHelpers.callMethod(ab, "hideActionMode");
                         return;
                     } catch (Throwable ignored) {}
                 }
@@ -328,25 +316,69 @@ public class ShowDeletedMessages {
     }
 
     /**
-     * Finds the main chat RecyclerView (RecyclerListView) and calls
-     * notifyDataSetChanged() on its adapter, so preserved cells redraw with the X.
+     * Refreshes the chat list so preserved-message cells redraw without selection circles.
+     *
+     * Priority (most to least targeted):
+     *   1. updateVisibleRows() on ChatActivity — the exact method NagramX calls after
+     *      multi-selection changes; triggers per-cell visual update without data reload.
+     *   2. chatAdapter field (AutomationResolver → raw name) → notifyDataSetChanged(true)
+     *   3. chatListView field (AutomationResolver → raw name) → adapter.notifyDataSetChanged(true)
+     *   4. Type-scan all RecyclerView/RecyclerListView fields → invalidate + notify all
      */
     private static void refreshChatAdapter(Object chatActivity, Class<?> chatActivityClass) {
+        // 1. updateVisibleRows() — preferred: refreshes cell views in-place
+        try {
+            de.robv.android.xposed.XposedHelpers.callMethod(chatActivity,
+                    AutomationResolver.resolve("ChatActivity", "updateVisibleRows",
+                            AutomationResolver.ResolverType.Method));
+            return;
+        } catch (Throwable ignored) {}
+        try {
+            de.robv.android.xposed.XposedHelpers.callMethod(chatActivity, "updateVisibleRows");
+            return;
+        } catch (Throwable ignored) {}
+
+        // 2. chatAdapter field → notifyDataSetChanged(true)
+        try {
+            String adapterField = AutomationResolver.resolve("ChatActivity", "chatAdapter",
+                    AutomationResolver.ResolverType.Field);
+            Object adapter = de.robv.android.xposed.XposedHelpers.getObjectField(chatActivity, adapterField);
+            if (adapter != null) {
+                notifyAdapter(adapter);
+                return;
+            }
+        } catch (Throwable ignored) {}
+
+        // 3. chatListView field → get adapter → notifyDataSetChanged(true)
+        try {
+            String listField = AutomationResolver.resolve("ChatActivity", "chatListView",
+                    AutomationResolver.ResolverType.Field);
+            Object rv = de.robv.android.xposed.XposedHelpers.getObjectField(chatActivity, listField);
+            if (rv != null) {
+                try { de.robv.android.xposed.XposedHelpers.callMethod(rv, "invalidate"); } catch (Throwable ignored) {}
+                try {
+                    Object adapter = de.robv.android.xposed.XposedHelpers.callMethod(rv, "getAdapter");
+                    if (adapter != null) { notifyAdapter(adapter); return; }
+                } catch (Throwable ignored) {}
+            }
+        } catch (Throwable ignored) {}
+
+        // 4. Type-scan: refresh ALL RecyclerView-like fields found on ChatActivity
         try {
             Class<?> cls = chatActivityClass;
             while (cls != null && !Object.class.equals(cls)) {
                 for (Field f : cls.getDeclaredFields()) {
                     String typeName = f.getType().getName();
-                    if (!typeName.contains("RecyclerListView") && !typeName.contains("RecyclerView")) continue;
+                    if (!typeName.contains("RecyclerListView")
+                            && !typeName.contains("RecyclerView")
+                            && !typeName.contains("ChatListRecyclerView")) continue;
                     f.setAccessible(true);
                     Object rv = f.get(chatActivity);
                     if (rv == null) continue;
+                    try { de.robv.android.xposed.XposedHelpers.callMethod(rv, "invalidate"); } catch (Throwable ignored) {}
                     try {
                         Object adapter = de.robv.android.xposed.XposedHelpers.callMethod(rv, "getAdapter");
-                        if (adapter != null) {
-                            de.robv.android.xposed.XposedHelpers.callMethod(adapter, "notifyDataSetChanged");
-                            return; // refreshed the first (main) list found
-                        }
+                        if (adapter != null) notifyAdapter(adapter);
                     } catch (Throwable ignored) {}
                 }
                 cls = cls.getSuperclass();
@@ -356,13 +388,27 @@ public class ShowDeletedMessages {
         }
     }
 
+    /**
+     * Calls notifyDataSetChanged on an adapter.
+     * Telegram's ChatActivityAdapter overrides notifyDataSetChanged(boolean); tries
+     * that first, falls back to the no-arg RecyclerView.Adapter base method.
+     */
+    private static void notifyAdapter(Object adapter) {
+        try {
+            de.robv.android.xposed.XposedHelpers.callMethod(adapter, "notifyDataSetChanged", true);
+        } catch (Throwable ignored) {
+            try {
+                de.robv.android.xposed.XposedHelpers.callMethod(adapter, "notifyDataSetChanged");
+            } catch (Throwable ignored2) {}
+        }
+    }
+
     // ── Hook 2: processUpdateArray ────────────────────────────────────────────
 
     public static void init() {
         try {
             if (ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER) == null) return;
 
-            // Find processUpdateArray by signature: (ArrayList, ArrayList, ArrayList, boolean, int)
             List<String> candidates = new ArrayList<>();
             for (Method m : ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER).getDeclaredMethods()) {
                 if (m.getParameterCount() == 5
@@ -394,24 +440,18 @@ public class ShowDeletedMessages {
                             if (updates == null || updates.isEmpty()) return;
 
                             MessagesController mc = new MessagesController(param.thisObject);
-
                             HashMap<Long, ArrayList<Integer>> pendingDeletes = new HashMap<>();
 
                             for (Object item : updates) {
                                 Class<?> itemCls = item.getClass();
-
                                 if (itemCls.equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_MESSAGES))) {
                                     ArrayList<Integer> ids =
                                             new TLRPC.TL_updateDeleteMessages(item).getMessages();
                                     if (ids != null && !ids.isEmpty()) {
                                         ArrayList<Integer> bucket = pendingDeletes.get(0L);
-                                        if (bucket == null) {
-                                            bucket = new ArrayList<>();
-                                            pendingDeletes.put(0L, bucket);
-                                        }
+                                        if (bucket == null) { bucket = new ArrayList<>(); pendingDeletes.put(0L, bucket); }
                                         bucket.addAll(ids);
                                     }
-
                                 } else if (itemCls.equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_CHANNEL_MESSAGES))) {
                                     TLRPC.TL_updateDeleteChannelMessages cm =
                                             new TLRPC.TL_updateDeleteChannelMessages(item);
@@ -419,27 +459,18 @@ public class ShowDeletedMessages {
                                     ArrayList<Integer> ids = cm.getMessages();
                                     if (ids != null && !ids.isEmpty()) {
                                         ArrayList<Integer> bucket = pendingDeletes.get(key);
-                                        if (bucket == null) {
-                                            bucket = new ArrayList<>();
-                                            pendingDeletes.put(key, bucket);
-                                        }
+                                        if (bucket == null) { bucket = new ArrayList<>(); pendingDeletes.put(key, bucket); }
                                         bucket.addAll(ids);
                                     }
                                 }
                             }
 
                             if (pendingDeletes.isEmpty()) return;
-
                             LongSparseArray dialogMessage = mc.getDialogMessage();
-
                             for (Map.Entry<Long, ArrayList<Integer>> entry : pendingDeletes.entrySet()) {
-                                long dialogKey = entry.getKey();
-                                ArrayList<Integer> ids = entry.getValue();
-
-                                markFlagDeletedInDialogs(dialogMessage, dialogKey, ids);
-                                markMessagesDeletedForController(mc.getMessagesStorage(), dialogKey, ids);
+                                markFlagDeletedInDialogs(dialogMessage, entry.getKey(), entry.getValue());
+                                markMessagesDeletedForController(mc.getMessagesStorage(), entry.getKey(), entry.getValue());
                             }
-
                         } catch (Throwable t) {
                             Logger.e(t);
                         }
@@ -474,9 +505,7 @@ public class ShowDeletedMessages {
                                 try {
                                     @SuppressWarnings("unchecked")
                                     ArrayList<Integer> ids = (ArrayList<Integer>) param.args[1];
-                                    if (filterPreservedIds(ids)) {
-                                        param.setResult(null);
-                                    }
+                                    if (filterPreservedIds(ids)) param.setResult(null);
                                 } catch (Throwable t) {
                                     Logger.e(t);
                                     param.setResult(null);
@@ -498,16 +527,13 @@ public class ShowDeletedMessages {
                 }
             }
             if (removeFromNotif == null) {
-                Logger.w("ShowDeletedMessages: removeDeletedMessagesFromNotifications not found. "
-                        + Utils.issue);
+                Logger.w("ShowDeletedMessages: removeDeletedMessagesFromNotifications not found. " + Utils.issue);
             } else {
                 final Method finalRemove = removeFromNotif;
                 HMethod.hookMethod(finalRemove, new AbstractMethodHook() {
                     @Override
                     protected void beforeMethod(MethodHookParam param) {
-                        if (ConfigManager.showDeletedMessages.isEnable()) {
-                            param.setResult(null);
-                        }
+                        if (ConfigManager.showDeletedMessages.isEnable()) param.setResult(null);
                     }
                 });
             }
@@ -532,23 +558,17 @@ public class ShowDeletedMessages {
                             if (ConfigManager.showDeletedMessages == null
                                     || !ConfigManager.showDeletedMessages.isEnable()) return;
                             try {
-                                ArrayList<Integer> msgIds =
-                                        Utils.castList(param.args[0], Integer.class);
+                                ArrayList<Integer> msgIds = Utils.castList(param.args[0], Integer.class);
                                 if (msgIds == null || msgIds.isEmpty()) return;
 
-                                // Register ALL selected IDs into deletedIds immediately.
-                                // This ensures Hook 4's filter strips them ALL from the
-                                // messagesDeleted notification, so ChatActivity receives []
-                                // and nothing is wiped from the adapter.
+                                // Register ALL selected IDs into deletedIds immediately so
+                                // Hook 4's filter strips them from the messagesDeleted notification.
                                 for (Integer id : msgIds) {
-                                    if (!deletedIds.contains(id)) {
-                                        deletedIds.add(id);
-                                    }
+                                    if (!deletedIds.contains(id)) deletedIds.add(id);
                                 }
 
                                 MessagesController mc = new MessagesController(param.thisObject);
                                 markFlagDeletedInDialogs(mc.getDialogMessage(), 0L, msgIds);
-
                             } catch (Throwable t) {
                                 Logger.e(t);
                             }
@@ -559,16 +579,17 @@ public class ShowDeletedMessages {
 
             // ── Hook 4: postNotificationName for messagesDeleted ─────────────────
             //
-            // beforeMethod: Strip preserved IDs from the args in-place so ChatActivity
-            //   receives messagesDeleted([]) and removes nothing from the adapter.
-            //   The notification must still fire so ChatActivity can run its handler.
+            // beforeMethod: Strip preserved IDs from args so ChatActivity sees [] and
+            //   removes nothing from the adapter.  Notification still fires so ChatActivity
+            //   runs its handler (important for non-selection-related cleanup paths).
             //
-            // afterMethod (Bug 2 fix): After ChatActivity processed messagesDeleted([])
-            //   and did nothing, force-exit selection mode by:
-            //   (a) Locating the ChatActivity observer via NotificationCenter.getObservers()
-            //   (b) Scanning its SparseArray[] fields to find selectedMessagesIds
-            //   (c) Clearing our preserved IDs from it and calling hideActionMode()
-            //   (d) Refreshing the adapter so cells redraw with the X indicator
+            // afterMethod (Bug 2 fix): ChatActivity processed [] and did nothing about
+            //   selection mode.  We now force-exit it by:
+            //   (a) Getting the ChatActivity observer from NotificationCenter.getObservers()
+            //   (b) Clearing its selectedMessagesIds for our preserved IDs
+            //   (c) Calling hideActionMode() so the action bar returns to normal
+            //   (d) Calling updateVisibleRows() / notifyDataSetChanged(true) so the
+            //       selection circles vanish immediately without requiring a scroll.
             HMethod.hookMethod(
                 ClassLoad.getClass(ClassNames.NOTIFICATION_CENTER),
                 AutomationResolver.resolve("NotificationCenter", "postNotificationName",
@@ -598,9 +619,6 @@ public class ShowDeletedMessages {
                             if ((int) param.args[0] != NotificationCenter.getMessagesDeleted()) return;
                             if (deletedIds.isEmpty()) return;
                             try {
-                                // NotificationCenter dispatched messagesDeleted([]) to all
-                                // observers.  ChatActivity saw an empty list and did nothing —
-                                // selection checkboxes are still visible.  Fix it now.
                                 forceClearSelectionMode(param.thisObject);
                             } catch (Throwable t) {
                                 Logger.e(t);
@@ -634,9 +652,7 @@ public class ShowDeletedMessages {
                 @Override
                 protected void beforeMethod(MethodHookParam param) {
                     TLRPC.Message message = new TLRPC.Message(param.args[0]);
-                    if ((message.getFlags() & FLAG_DELETED) != 0) {
-                        param.setResult(0);
-                    }
+                    if ((message.getFlags() & FLAG_DELETED) != 0) param.setResult(0);
                 }
             }
         );
