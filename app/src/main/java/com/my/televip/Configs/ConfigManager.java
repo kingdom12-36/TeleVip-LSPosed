@@ -42,6 +42,8 @@ import com.my.televip.features.NoFloodWait;
 import com.my.televip.features.UnlockGroupInput;
 import com.my.televip.features.SuppressBanKick;
 import com.my.televip.features.TelePremium;
+import com.my.televip.features.MessageSchedulerBypass;
+import com.my.televip.features.UnlockTranslateButton;
 import com.my.televip.features.otherFeatures.AlwaysSaveMedia;
 import com.my.televip.features.otherFeatures.CopyNameHook;
 import com.my.televip.features.otherFeatures.EditOnlineTextView;
@@ -133,6 +135,10 @@ public class ConfigManager {
     public static ConfigItem noFloodWait;
     public static ConfigItem unlockGroupInput;
     public static ConfigItem suppressBanKick;
+
+    // Latest features
+    public static ConfigItem messageSchedulerBypass;
+    public static ConfigItem unlockTranslateButton;
 
     // Button
     public static ConfigItem btnChannel;
@@ -245,6 +251,12 @@ public class ConfigManager {
 
             suppressBanKick = new ConfigItem(ConfigItem.SWITCH, Keys.SuppressBanKick, ConfigPreferences.getBoolean(Keys.SuppressBanKick), SuppressBanKick::init);
             items.add(suppressBanKick);
+
+            messageSchedulerBypass = new ConfigItem(ConfigItem.SWITCH, Keys.MessageSchedulerBypass, ConfigPreferences.getBoolean(Keys.MessageSchedulerBypass), MessageSchedulerBypass::init);
+            items.add(messageSchedulerBypass);
+
+            unlockTranslateButton = new ConfigItem(ConfigItem.SWITCH, Keys.UnlockTranslateButton, ConfigPreferences.getBoolean(Keys.UnlockTranslateButton), UnlockTranslateButton::init);
+            items.add(unlockTranslateButton);
 
             items.add(shadows);
 
