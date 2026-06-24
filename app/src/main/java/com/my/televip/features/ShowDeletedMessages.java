@@ -21,25 +21,12 @@ import com.my.televip.virtuals.ui.Cells.ChatMessageCell;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
-
-import de.robv.android.xposed.XposedHelpers;
 
 public class ShowDeletedMessages {
 
     public static final int FLAG_DELETED = 1 << 31;
-
-    /**
-     * Reliable in-memory set of deleted message IDs.
-     * Populated directly from the delete update — independent of any
-     * Telegram field-name resolution that could fail.
-     */
-    public static final Set<Integer> deletedIds =
-            Collections.synchronizedSet(new HashSet<>());
 
     private static boolean isDeleteMessage = false;
 
@@ -49,61 +36,23 @@ public class ShowDeletedMessages {
         MessageStorage.markMessagesDeleted(messagesStorage, dialogId, delMsg);
     }
 
-    /**
-     * Prepend the trash-bin emoji into the raw message text.
-     * Idempotent — skipped when the prefix is already present.
-     */
-    private static void markDeletedText(TLRPC.Message owner) {
+    public static void init()
+    {
         try {
-            String txt = (String) XposedHelpers.getObjectField(owner.message, "message");
-            if (txt == null) txt = "";
-            if (!txt.startsWith("\uD83D\uDDD1")) {
-                XposedHelpers.setObjectField(owner.message, "message", "\uD83D\uDDD1  " + txt);
-            }
-        } catch (Throwable ignored) {}
-    }
+            if (ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER) != null) {
+                Method[] messagesControllerMethods = ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER).getDeclaredMethods();
+                List<String> methodNames = new ArrayList<>();
 
-    public static void init() {
-        try {
-            Class<?> mcClass = ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER);
-            if (mcClass == null) return;
+                for (Method method : messagesControllerMethods)
+                    if (method.getParameterCount() == 5 && method.getParameterTypes()[0] == ArrayList.class && method.getParameterTypes()[1] == ArrayList.class && method.getParameterTypes()[2] == ArrayList.class && method.getParameterTypes()[3] == boolean.class && method.getParameterTypes()[4] == int.class)
+                        methodNames.add(method.getName());
 
-            Method[] methods = mcClass.getDeclaredMethods();
-            List<Method> candidates = new ArrayList<>();
+                if (methodNames.size() != 1)
+                    Logger.w("Failed to hook processUpdateArray! Reason: " + (methodNames.isEmpty() ? "No method found" : "Multiple methods found") + ", " + Utils.issue);
+                else {
+                    String methodName = methodNames.get(0);
 
-            // Primary: exactly 5 params (ArrayList,ArrayList,ArrayList,boolean,int)
-            for (Method m : methods) {
-                Class<?>[] t = m.getParameterTypes();
-                if (t.length == 5
-                        && t[0] == ArrayList.class
-                        && t[1] == ArrayList.class
-                        && t[2] == ArrayList.class
-                        && t[3] == boolean.class
-                        && t[4] == int.class) {
-                    candidates.add(m);
-                }
-            }
-
-            // Fallback: first 5 params match, method has more params (newer Telegram)
-            if (candidates.isEmpty()) {
-                for (Method m : methods) {
-                    Class<?>[] t = m.getParameterTypes();
-                    if (t.length >= 5
-                            && t[0] == ArrayList.class
-                            && t[1] == ArrayList.class
-                            && t[2] == ArrayList.class
-                            && t[3] == boolean.class
-                            && t[4] == int.class) {
-                        candidates.add(m);
-                    }
-                }
-            }
-
-            if (candidates.isEmpty()) {
-                Logger.w("Failed to hook processUpdateArray! Reason: No method found, " + Utils.issue);
-            } else {
-                for (Method candidate : candidates) {
-                    HMethod.hookMethod(candidate, new AbstractMethodHook() {
+                    HMethod.hookMethod(ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER), methodName, ArrayList.class, ArrayList.class, ArrayList.class, boolean.class, int.class, new AbstractMethodHook() {
                         @Override
                         protected void beforeMethod(MethodHookParam param) {
                             try {
@@ -113,75 +62,46 @@ public class ShowDeletedMessages {
                                     ArrayList<Object> newUpdates = new ArrayList<>();
 
                                     for (Object item : updates) {
-                                        if (!item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_CHANNEL_MESSAGES))
-                                                && !item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_MESSAGES)))
+                                        if (!item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_CHANNEL_MESSAGES)) && !item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_MESSAGES)))
                                             newUpdates.add(item);
 
                                         if (item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_CHANNEL_MESSAGES))) {
                                             TLRPC.TL_updateDeleteChannelMessages channelMessages = new TLRPC.TL_updateDeleteChannelMessages(item);
-                                            ArrayList<Integer> msgIds = channelMessages.getMessages();
-
-                                            if (msgIds != null) deletedIds.addAll(msgIds);
 
                                             LongSparseArray dialogMessage = messagesController.getDialogMessage();
+
                                             ArrayList<Object> dialogMessages = dialogMessage.get(-channelMessages.getChannelID());
                                             if (dialogMessages != null) {
                                                 for (final Object msgObj : dialogMessages) {
                                                     TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
-                                                    if (msgIds != null && msgIds.contains(owner.getID())) {
+                                                    if (channelMessages.getMessages().contains(owner.getID())) {
                                                         owner.setFlags(owner.getFlags() | FLAG_DELETED);
-                                                        markDeletedText(owner);
                                                     }
                                                 }
                                             }
-                                            markMessagesDeletedForController(
-                                                    messagesController.getMessagesStorage(),
-                                                    -channelMessages.getChannelID(),
-                                                    msgIds != null ? msgIds : new ArrayList<>());
+
+                                            markMessagesDeletedForController(messagesController.getMessagesStorage(), -channelMessages.getChannelID(), channelMessages.getMessages());
                                         }
-
                                         if (item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_MESSAGES))) {
+
                                             ArrayList<Integer> messages = new TLRPC.TL_updateDeleteMessages(item).getMessages();
-
-                                            if (messages != null) deletedIds.addAll(messages);
-
-                                            try {
-                                                LongSparseArray dialogMessage = messagesController.getDialogMessage();
-                                                int size = dialogMessage.size();
-                                                for (int di = 0; di < size; di++) {
-                                                    try {
-                                                        long key = dialogMessage.keyAt(di);
-                                                        ArrayList<Object> dialogMsgs = dialogMessage.get(key);
-                                                        if (dialogMsgs == null) continue;
-                                                        for (Object msgObj : dialogMsgs) {
-                                                            TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
-                                                            if (messages != null && messages.contains(owner.getID())) {
-                                                                owner.setFlags(owner.getFlags() | FLAG_DELETED);
-                                                                markDeletedText(owner);
-                                                            }
-                                                        }
-                                                    } catch (Throwable ignored) {}
-                                                }
-                                            } catch (Throwable ignored) {}
-
-                                            SparseArray<Object> dialogMessagesByIds = messagesController.getDialogMessagesByIds();
-                                            if (messages != null) {
-                                                for (int id : messages) {
-                                                    Object msgObj = dialogMessagesByIds.get(id);
-                                                    if (msgObj == null) continue;
+                                            SparseArray<Object> dialogMessages = messagesController.getDialogMessagesByIds();
+                                            for (int id : messages) {
+                                                Object msgObj = dialogMessages.get(id);
+                                                if (msgObj == null) {
+                                                    break;
+                                                } else {
                                                     TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
                                                     owner.setFlags(owner.getFlags() | FLAG_DELETED);
-                                                    markDeletedText(owner);
                                                 }
                                             }
-                                            markMessagesDeletedForController(
-                                                    messagesController.getMessagesStorage(),
-                                                    0,
-                                                    messages != null ? messages : new ArrayList<>());
+                                            markMessagesDeletedForController(messagesController.getMessagesStorage(), 0, messages);
                                         }
+
                                     }
                                     param.args[0] = newUpdates;
                                 }
+
                             } catch (Throwable throwable) {
                                 Logger.e(throwable);
                             }
@@ -189,7 +109,8 @@ public class ShowDeletedMessages {
                     });
                 }
             }
-        } catch (Throwable e) {
+
+        } catch (Throwable e){
             Logger.e(e);
         }
     }
@@ -199,35 +120,24 @@ public class ShowDeletedMessages {
             if (!isEnable) {
                 isEnable = true;
 
-                // Hook ALL overloads of markMessagesAsDeleted so we catch every
-                // variant regardless of how Telegram's parameter list changes.
-                String markDeletedName = AutomationResolver.resolve(
-                        "MessagesStorage", "markMessagesAsDeleted", AutomationResolver.ResolverType.Method);
-                boolean markedAny = false;
-                for (Method method : ClassLoad.getClass(ClassNames.MESSAGES_STORAGE).getDeclaredMethods()) {
-                    if (method.getName().equals(markDeletedName)) {
-                        HMethod.hookMethod(method, new AbstractMethodHook() {
-                            @Override
-                            protected void beforeMethod(MethodHookParam param) {
-                                if (!isDeleteMessage) {
-                                    param.setResult(null);
+                HMethod.hookMethod(
+                        ClassLoad.getClass(ClassNames.MESSAGES_STORAGE),
+                        AutomationResolver.resolve("MessagesStorage", "markMessagesAsDeleted", AutomationResolver.ResolverType.Method),
+                        AutomationResolver.merge(AutomationResolver.resolveObject("markMessagesAsDeleted", new Class[]{long.class, java.util.ArrayList.class, boolean.class, boolean.class, int.class, int.class}),
+                                new AbstractMethodHook() {
+                                    @Override
+                                    protected void beforeMethod(MethodHookParam param) {
+                                        if (!isDeleteMessage) {
+                                            param.setResult(null);
+                                        }
+                                    }
                                 }
-                            }
-                        });
-                        markedAny = true;
-                    }
-                }
-                if (!markedAny) {
-                    Logger.w("markMessagesAsDeleted: no overloads found, " + Utils.issue);
-                }
+                        ));
             }
 
-            // removeDeletedMessagesFromNotifications — already name-scan based, keep as-is
             Method removeDeletedMessagesFromNotifications = null;
             for (Method method : ClassLoad.getClass(ClassNames.NOTIFICATIONS_CONTROLLER).getDeclaredMethods())
-                if (method.getName().equals(AutomationResolver.resolve(
-                        "NotificationsController", "removeDeletedMessagesFromNotifications",
-                        AutomationResolver.ResolverType.Method)))
+                if (method.getName().equals(AutomationResolver.resolve("NotificationsController", "removeDeletedMessagesFromNotifications", AutomationResolver.ResolverType.Method)))
                     removeDeletedMessagesFromNotifications = method;
 
             if (removeDeletedMessagesFromNotifications == null)
@@ -242,46 +152,45 @@ public class ShowDeletedMessages {
                     }
                 });
 
-            // Hook ALL overloads of deleteMessages so isDeleteMessage is set
-            // regardless of how Telegram's parameter list changes across versions.
-            String deleteMessagesName = AutomationResolver.resolve(
-                    "MessagesController", "deleteMessages", AutomationResolver.ResolverType.Method);
-            boolean deletedAny = false;
-            for (Method method : ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER).getDeclaredMethods()) {
-                if (method.getName().equals(deleteMessagesName)) {
-                    HMethod.hookMethod(method, new AbstractMethodHook() {
-                        @Override
-                        protected void beforeMethod(MethodHookParam param) {
-                            isDeleteMessage = true;
-                        }
-                    });
-                    deletedAny = true;
-                }
-            }
-            if (!deletedAny) {
-                Logger.w("deleteMessages: no overloads found, " + Utils.issue);
-            }
-
-            // Block messagesDeleted notification for non-user-initiated deletes
-            HMethod.hookMethod(ClassLoad.getClass(ClassNames.NOTIFICATION_CENTER),
-                    AutomationResolver.resolve("NotificationCenter", "postNotificationName", AutomationResolver.ResolverType.Method),
-                    AutomationResolver.merge(AutomationResolver.resolveObject("postNotificationName", new Class[]{int.class, Object[].class}),
+            HMethod.hookMethod(
+                    ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER),
+                    AutomationResolver.resolve("MessagesController", "deleteMessages", AutomationResolver.ResolverType.Method),
+                    AutomationResolver.merge(AutomationResolver.resolveObject("deleteMessages", new Class[]{java.util.ArrayList.class,
+                                    java.util.ArrayList.class,
+                                    ClassLoad.getClass(ClassNames.TLRPC_ENCRYPTED_CHAT),
+                                    long.class,
+                                    boolean.class,
+                                    int.class,
+                                    boolean.class,
+                                    long.class,
+                                    ClassLoad.getClass(ClassNames.TL_OBJECT),
+                                    int.class,
+                                    boolean.class,
+                                    int.class}),
                             new AbstractMethodHook() {
                                 @Override
                                 protected void beforeMethod(MethodHookParam param) {
-                                    if (!isDeleteMessage) {
-                                        int id = (int) param.args[0];
-                                        if (id == NotificationCenter.getMessagesDeleted()) {
-                                            param.setResult(null);
-                                        }
-                                    }
+                                    isDeleteMessage = true;
                                 }
+                            }
+                    ));
 
-                                @Override
-                                protected void afterMethod(MethodHookParam param) {
-                                    isDeleteMessage = false;
-                                }
-                            }));
+            HMethod.hookMethod(ClassLoad.getClass(ClassNames.NOTIFICATION_CENTER), AutomationResolver.resolve("NotificationCenter", "postNotificationName", AutomationResolver.ResolverType.Method), AutomationResolver.merge(AutomationResolver.resolveObject("postNotificationName", new Class[]{int.class, Object[].class}), new AbstractMethodHook() {
+                @Override
+                protected void beforeMethod(MethodHookParam param) {
+                    if (!isDeleteMessage) {
+                        int id = (int) param.args[0];
+                        if (id == NotificationCenter.getMessagesDeleted()) {
+                            param.setResult(null);
+                        }
+                    }
+                }
+
+                @Override
+                protected void afterMethod(MethodHookParam param) {
+                    isDeleteMessage = false;
+                }
+            }));
 
             ShowDeletedMessages.init();
             ShowDeletedMessages.initAutoDownload();
@@ -291,21 +200,23 @@ public class ShowDeletedMessages {
 
         if (ConfigManager.showDeletedMessages.isEnable() && !ChatMessageCell.isEnable)
             ChatMessageCell.init();
+
     }
 
     public static void initAutoDownload() {
+
         if (ClassLoad.getClass(ClassNames.DOWNLOAD_CONTROLLER) == null)
             return;
-        HMethod.hookMethod(ClassLoad.getClass(ClassNames.DOWNLOAD_CONTROLLER),
-                AutomationResolver.resolve("DownloadController", "canDownloadMedia", AutomationResolver.ResolverType.Method),
-                ClassLoad.getClass(ClassNames.TL_MESSAGE),
-                new AbstractMethodHook() {
-                    @Override
-                    protected void beforeMethod(MethodHookParam param) {
-                        TLRPC.Message message = new TLRPC.Message(param.args[0]);
-                        if ((message.getFlags() & FLAG_DELETED) != 0)
-                            param.setResult(0);
-                    }
-                });
+
+        HMethod.hookMethod(ClassLoad.getClass(ClassNames.DOWNLOAD_CONTROLLER), AutomationResolver.resolve("DownloadController", "canDownloadMedia", AutomationResolver.ResolverType.Method), ClassLoad.getClass(ClassNames.TL_MESSAGE), new AbstractMethodHook() {
+            @Override
+            protected void beforeMethod(MethodHookParam param) {
+                TLRPC.Message message = new TLRPC.Message(param.args[0]);
+                if ((message.getFlags() & FLAG_DELETED) != 0)
+                    param.setResult(0);
+            }
+        });
+
     }
+
 }
