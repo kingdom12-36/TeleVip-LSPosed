@@ -111,4 +111,9 @@ public class Keys {
     public static final String NoFloodWait             = "NoFloodWait";
     public static final String UnlockGroupInput        = "UnlockGroupInput";
     public static final String SuppressBanKick         = "SuppressBanKick";
+    public static final String AntiContactSync         = "AntiContactSync";
+    public static final String PrivacyForcer           = "PrivacyForcer";
+    public static final String SpoofDeviceInfo         = "SpoofDeviceInfo";
+    public static final String MessageSchedulerBypass  = "MessageSchedulerBypass";
+    public static final String UnlockTranslateButton   = "UnlockTranslateButton";
 }
