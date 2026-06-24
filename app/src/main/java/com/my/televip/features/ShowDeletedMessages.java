@@ -31,8 +31,10 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * Architecture (mirrors NagramX / AyuGram logic adapted for Xposed):
  *
  *  1. deleteMessages hook (beforeMethod)
- *     — User pressed Delete.  Before the original runs, scan ALL loaded dialog message
- *       lists (dialogMessage LongSparseArray) and mark every matching message FLAG_DELETED.
+ *     — User pressed Delete.  Before the original runs, ALL msgIds are added directly
+ *       to deletedIds (fix for multi-select wipe bug — dialogMessage only holds the
+ *       preview/newest message per dialog, so scanning it missed older selected messages).
+ *       Then FLAG_DELETED is set on any messages found in the in-memory lists.
  *       The original method then calls markMessagesAsDeleted + posts messagesDeleted —
  *       both are handled by hooks 2 and 3 below.
  *
@@ -340,12 +342,32 @@ public class ShowDeletedMessages {
                                         Utils.castList(param.args[0], Integer.class);
                                 if (msgIds == null || msgIds.isEmpty()) return;
 
+                                // ── FIX: Register ALL selected IDs into deletedIds immediately ──
+                                // Root cause of the multi-select wipe bug:
+                                // dialogMessage (LongSparseArray) only holds the dialog-list
+                                // PREVIEW entry — one representative message per dialog (the newest).
+                                // When the user selects [A, B, C], scanning dialogMessage finds only
+                                // C (newest), so deletedIds = {C} only.
+                                // Hook 4 then filters messagesDeleted([A,B,C]) → removes only C →
+                                // fires messagesDeleted([A,B]) → ChatActivity wipes A and B.
+                                // Fix: add every selected ID to deletedIds here, BEFORE the original
+                                // runs. Hook 4 will then filter ALL of them → ChatActivity receives
+                                // messagesDeleted([]) → exits selection mode cleanly → removes nothing.
+                                // ChatMessageCell.isDeleted() already has deletedIds.contains() as a
+                                // fallback, so the X indicator shows on all preserved messages even
+                                // when FLAG_DELETED could not be set via in-memory scanning.
+                                for (Integer id : msgIds) {
+                                    if (!deletedIds.contains(id)) {
+                                        deletedIds.add(id);
+                                    }
+                                }
+
                                 MessagesController mc = new MessagesController(param.thisObject);
 
-                                // dialogMessagesByIds holds only the chat-list PREVIEW message
-                                // (one entry per dialog).  For batch deletes we must scan
-                                // dialogMessage (all loaded messages per dialog) so every
-                                // selected message gets FLAG_DELETED — not just the newest one.
+                                // Best-effort: set FLAG_DELETED on messages that ARE found in
+                                // the in-memory lists (so they draw the X via the flags path too).
+                                // dialogMessage holds per-dialog loaded message lists (not just
+                                // the preview), so this covers whatever is currently in memory.
                                 markFlagDeletedInDialogs(mc.getDialogMessage(), 0L, msgIds);
 
                             } catch (Throwable t) {
