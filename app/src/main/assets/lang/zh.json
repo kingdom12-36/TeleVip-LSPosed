@@ -109,5 +109,6 @@
   "PrivacyForcer": "强制最高隐私设置",
   "SpoofDeviceInfo": "伪造设备信息",
   "MessageSchedulerBypass": "绕过消息定时限制",
-  "UnlockTranslateButton": "解锁翻译按钮"
+  "UnlockTranslateButton": "解锁翻译按钮",
+  "ShowRealLastSeen": "显示真实最后在线时间"
 }
