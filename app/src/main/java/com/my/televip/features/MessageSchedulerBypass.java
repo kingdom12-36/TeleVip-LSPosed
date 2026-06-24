@@ -9,8 +9,10 @@ import com.my.televip.logging.Logger;
 import com.my.televip.obfuscate.AutomationResolver;
 import com.my.televip.utils.Utils;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 
+import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 
 /**
@@ -20,19 +22,13 @@ import de.robv.android.xposed.XposedHelpers;
  * Telegram enforces a cap (100 scheduled messages per chat) both server-side
  * and client-side.  The server will still reject pushes beyond its hard cap,
  * but the CLIENT blocks the UI from even trying once it thinks the limit is
- * reached.  This feature removes that client-side gate so you can queue up to
- * the server's own threshold without hitting a wall in the UI.
+ * reached.  This feature removes that client-side gate.
  *
  * Attack surface:
- *  1. ScheduledMessagesController — the primary store for scheduled messages
- *     per-dialog.  Hooks getScheduledMessages / getCount / hasScheduledMessages
- *     to avoid inflating the apparent count past the limit.
- *  2. ChatActivity permission checks — methods like canScheduleMessage /
- *     isScheduleLimitReached that gate the "Schedule Message" option.
- *  3. AlertDialog suppression — Telegram may show "Too many scheduled messages"
- *     dialog; we dismiss it.
- *  4. Broad method scan — any method whose name contains "scheduled" and returns
- *     int/boolean is patched to report "no limit".
+ *  1. ScheduledMessagesController — patches limit/count checks.
+ *  2. ChatActivity permission checks — gates the "Schedule Message" option.
+ *  3. AlertDialog suppression — dismisses "Too many scheduled messages".
+ *  4. Broad method scan — any "scheduled" boolean/int method is patched.
  */
 public class MessageSchedulerBypass {
 
@@ -50,7 +46,6 @@ public class MessageSchedulerBypass {
     }
 
     // ── 1. ScheduledMessagesController ───────────────────────────────────────
-    @SuppressWarnings({"unchecked", "rawtypes"})
     private static void hookScheduledMessagesController() {
         for (String cls : new String[]{
             "org.telegram.messenger.ScheduledMessagesController",
@@ -69,7 +64,7 @@ public class MessageSchedulerBypass {
                         && lower.contains("schedul");
 
                     if (isLimitCheck && m.getReturnType() == boolean.class) {
-                        XposedHelpers.hookMethod(m, new AbstractMethodHook() {
+                        HMethod.hookMethod(m, new AbstractMethodHook() {
                             @Override
                             protected void afterMethod(MethodHookParam param) {
                                 if (ConfigManager.messageSchedulerBypass.isEnable())
@@ -77,7 +72,7 @@ public class MessageSchedulerBypass {
                             }
                         });
                     } else if (isCountGetter && (m.getReturnType() == int.class || m.getReturnType() == long.class)) {
-                        XposedHelpers.hookMethod(m, new AbstractMethodHook() {
+                        HMethod.hookMethod(m, new AbstractMethodHook() {
                             @Override
                             protected void afterMethod(MethodHookParam param) {
                                 if (!ConfigManager.messageSchedulerBypass.isEnable()) return;
@@ -88,18 +83,22 @@ public class MessageSchedulerBypass {
                     }
                 }
 
-                // Hook constructors using raw cast to avoid wildcard capture compile error
-                XposedHelpers.hookAllConstructors((Class) c, new AbstractMethodHook() {
-                    @Override
-                    protected void afterMethod(MethodHookParam param) {
-                        // no-op: constructor hook placeholder for future field zeroing
-                    }
-                });
+                // Hook all constructors via XposedBridge to avoid capture type issues
+                for (Constructor<?> ctor : c.getDeclaredConstructors()) {
+                    try {
+                        XposedBridge.hookMethod(ctor, new AbstractMethodHook() {
+                            @Override
+                            protected void afterMethod(MethodHookParam param) {
+                                // placeholder — field zeroing can be added here if needed
+                            }
+                        });
+                    } catch (Throwable ignored) {}
+                }
 
-                // Hook canScheduleMessage if found by known name
+                // Hook canScheduleMessage by known names
                 for (String name : new String[]{"canScheduleMessage", "canAddScheduled", "checkScheduleLimit"}) {
                     try {
-                        XposedHelpers.findAndHookMethod((Class) c, name, new AbstractMethodHook() {
+                        HMethod.hookMethod(c, name, new AbstractMethodHook() {
                             @Override
                             protected void afterMethod(MethodHookParam param) {
                                 if (ConfigManager.messageSchedulerBypass.isEnable())
@@ -144,13 +143,14 @@ public class MessageSchedulerBypass {
             } catch (Throwable ignored) {}
         }
 
+        // Broad scan
         try {
             for (Method m : chatCls.getDeclaredMethods()) {
                 String lower = m.getName().toLowerCase();
                 if (!lower.contains("schedul")) continue;
                 try {
                     if (m.getReturnType() == boolean.class) {
-                        XposedHelpers.hookMethod(m, new AbstractMethodHook() {
+                        HMethod.hookMethod(m, new AbstractMethodHook() {
                             @Override
                             protected void afterMethod(MethodHookParam param) {
                                 if (!ConfigManager.messageSchedulerBypass.isEnable()) return;
@@ -162,7 +162,7 @@ public class MessageSchedulerBypass {
                             }
                         });
                     } else if (m.getReturnType() == int.class && m.getParameterCount() == 0) {
-                        XposedHelpers.hookMethod(m, new AbstractMethodHook() {
+                        HMethod.hookMethod(m, new AbstractMethodHook() {
                             @Override
                             protected void afterMethod(MethodHookParam param) {
                                 if (ConfigManager.messageSchedulerBypass.isEnable())
