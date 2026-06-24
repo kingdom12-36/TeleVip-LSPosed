@@ -50,6 +50,7 @@ public class MessageSchedulerBypass {
     }
 
     // ── 1. ScheduledMessagesController ───────────────────────────────────────
+    @SuppressWarnings({"unchecked", "rawtypes"})
     private static void hookScheduledMessagesController() {
         for (String cls : new String[]{
             "org.telegram.messenger.ScheduledMessagesController",
@@ -68,7 +69,6 @@ public class MessageSchedulerBypass {
                         && lower.contains("schedul");
 
                     if (isLimitCheck && m.getReturnType() == boolean.class) {
-                        // "limit reached / can't schedule" → always false
                         XposedHelpers.hookMethod(m, new AbstractMethodHook() {
                             @Override
                             protected void afterMethod(MethodHookParam param) {
@@ -77,7 +77,6 @@ public class MessageSchedulerBypass {
                             }
                         });
                     } else if (isCountGetter && (m.getReturnType() == int.class || m.getReturnType() == long.class)) {
-                        // Return 0 so the controller thinks the slot is empty
                         XposedHelpers.hookMethod(m, new AbstractMethodHook() {
                             @Override
                             protected void afterMethod(MethodHookParam param) {
@@ -89,10 +88,18 @@ public class MessageSchedulerBypass {
                     }
                 }
 
+                // Hook constructors using raw cast to avoid wildcard capture compile error
+                XposedHelpers.hookAllConstructors((Class) c, new AbstractMethodHook() {
+                    @Override
+                    protected void afterMethod(MethodHookParam param) {
+                        // no-op: constructor hook placeholder for future field zeroing
+                    }
+                });
+
                 // Hook canScheduleMessage if found by known name
-                for (String name : new String[]{"canScheduleMessage","canAddScheduled","checkScheduleLimit"}) {
+                for (String name : new String[]{"canScheduleMessage", "canAddScheduled", "checkScheduleLimit"}) {
                     try {
-                        XposedHelpers.findAndHookMethod(c, name, new AbstractMethodHook() {
+                        XposedHelpers.findAndHookMethod((Class) c, name, new AbstractMethodHook() {
                             @Override
                             protected void afterMethod(MethodHookParam param) {
                                 if (ConfigManager.messageSchedulerBypass.isEnable())
@@ -102,7 +109,7 @@ public class MessageSchedulerBypass {
                     } catch (Throwable ignored) {}
                 }
 
-                break; // found the class, stop iterating
+                break;
             } catch (Throwable ignored) {}
         }
     }
@@ -112,7 +119,6 @@ public class MessageSchedulerBypass {
         Class<?> chatCls = ClassLoad.getClass(ClassNames.CHAT_ACTIVITY);
         if (chatCls == null) return;
 
-        // Methods that open or gate the schedule picker — let them through
         for (String name : new String[]{
             "isScheduleLimitReached", "canScheduleMessage", "checkScheduleLimit",
             "isScheduledFull", "maxScheduledMessages", "getScheduleLimit"
@@ -129,7 +135,7 @@ public class MessageSchedulerBypass {
                                 String n = ((Method) param.method).getName().toLowerCase();
                                 boolean isNegative = n.contains("limit") || n.contains("full")
                                     || n.contains("reached");
-                                param.setResult(!isNegative); // limit-type → false, can-type → true
+                                param.setResult(!isNegative);
                             } else if (r instanceof Integer) {
                                 param.setResult(Integer.MAX_VALUE);
                             }
@@ -138,7 +144,6 @@ public class MessageSchedulerBypass {
             } catch (Throwable ignored) {}
         }
 
-        // Broad scan on ChatActivity for any "scheduled" boolean/int method
         try {
             for (Method m : chatCls.getDeclaredMethods()) {
                 String lower = m.getName().toLowerCase();
