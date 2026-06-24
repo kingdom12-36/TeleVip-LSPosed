@@ -17,25 +17,10 @@ import de.robv.android.xposed.XposedHelpers;
  * UnlockTranslateButton — force-shows the "Translate" option on every message,
  * regardless of language, user language settings, or Premium status.
  *
- * Telegram only offers translate on messages written in a language different
- * from your interface language, and it requires Premium for some clients.
- * This hooks the visibility logic at three levels:
- *
- *  1. ChatMessageCell / MessageObject — the shouldShowTranslate() / canTranslate()
- *     checks that decide whether to include "Translate" in the long-press menu.
- *     We force them to return true.
- *
- *  2. ChatActivity context menu builder — methods that assemble the popup menu
- *     for a long-pressed message.  We scan for any method that adds or checks
- *     a "translate" action and make it always visible.
- *
- *  3. TranslateAlert / TranslatorHelper — the class that performs the actual
- *     translation.  We hook the language-match guard so it skips the "same
- *     language, nothing to translate" early-return.
- *
- *  4. Premium paywall hook — Telegram may gate translate behind isPremium();
- *     we force that check to return true for the translate flow only by hooking
- *     the enclosing translate-entry-point method.
+ * Hooks at three levels:
+ *  1. ChatMessageCell / MessageObject — shouldShowTranslate / canTranslate forced true.
+ *  2. ChatActivity context menu — translate menu item always visible.
+ *  3. TranslatorHelper / TranslateAlert — language-match guard and Premium gate bypassed.
  */
 public class UnlockTranslateButton {
 
@@ -54,7 +39,6 @@ public class UnlockTranslateButton {
 
     // ── 1. ChatMessageCell / MessageObject — force canTranslate = true ────────
     private static void hookChatMessageCellTranslate() {
-        // Hook on ChatMessageCell
         Class<?> cellCls = ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL);
         if (cellCls != null) {
             for (String name : new String[]{
@@ -81,7 +65,7 @@ public class UnlockTranslateButton {
                     String lower = m.getName().toLowerCase();
                     if (!lower.contains("translat")) continue;
                     if (m.getReturnType() == boolean.class) {
-                        XposedHelpers.hookMethod(m, new AbstractMethodHook() {
+                        HMethod.hookMethod(m, new AbstractMethodHook() {
                             @Override
                             protected void afterMethod(MethodHookParam param) {
                                 if (ConfigManager.unlockTranslateButton.isEnable())
@@ -89,12 +73,11 @@ public class UnlockTranslateButton {
                             }
                         });
                     } else if (m.getReturnType() == int.class && m.getParameterCount() == 0) {
-                        // visibility int: 0 = VISIBLE, 8 = GONE — force VISIBLE
-                        XposedHelpers.hookMethod(m, new AbstractMethodHook() {
+                        HMethod.hookMethod(m, new AbstractMethodHook() {
                             @Override
                             protected void afterMethod(MethodHookParam param) {
                                 if (ConfigManager.unlockTranslateButton.isEnable())
-                                    param.setResult(0);
+                                    param.setResult(0); // 0 = View.VISIBLE
                             }
                         });
                     }
@@ -102,7 +85,7 @@ public class UnlockTranslateButton {
             } catch (Throwable ignored) {}
         }
 
-        // Also patch on MessageObject (used when building the action sheet)
+        // Also patch MessageObject if present
         for (String cls : new String[]{
             "org.telegram.messenger.MessageObject",
             "org.telegram.ui.Cells.ChatMessageCell"
@@ -114,7 +97,7 @@ public class UnlockTranslateButton {
                     String lower = m.getName().toLowerCase();
                     if (!lower.contains("translat")) continue;
                     if (m.getReturnType() == boolean.class) {
-                        XposedHelpers.hookMethod(m, new AbstractMethodHook() {
+                        HMethod.hookMethod(m, new AbstractMethodHook() {
                             @Override
                             protected void afterMethod(MethodHookParam param) {
                                 if (ConfigManager.unlockTranslateButton.isEnable())
@@ -132,7 +115,6 @@ public class UnlockTranslateButton {
         Class<?> chatCls = ClassLoad.getClass(ClassNames.CHAT_ACTIVITY);
         if (chatCls == null) return;
 
-        // Methods that decide what shows in the long-press popup
         for (String name : new String[]{
             "showTranslateOption", "addTranslateButton", "createTranslateItem",
             "isTranslateOptionVisible", "showTranslateItem", "buildMessageMenu",
@@ -147,7 +129,7 @@ public class UnlockTranslateButton {
                             if (!ConfigManager.unlockTranslateButton.isEnable()) return;
                             Object r = param.getResult();
                             if (r instanceof Boolean) param.setResult(true);
-                            else if (r instanceof Integer) param.setResult(0); // VISIBLE
+                            else if (r instanceof Integer) param.setResult(0);
                         }
                     });
             } catch (Throwable ignored) {}
@@ -159,7 +141,7 @@ public class UnlockTranslateButton {
                 String lower = m.getName().toLowerCase();
                 if (!lower.contains("translat")) continue;
                 if (m.getReturnType() == boolean.class) {
-                    XposedHelpers.hookMethod(m, new AbstractMethodHook() {
+                    HMethod.hookMethod(m, new AbstractMethodHook() {
                         @Override
                         protected void afterMethod(MethodHookParam param) {
                             if (ConfigManager.unlockTranslateButton.isEnable())
@@ -167,7 +149,7 @@ public class UnlockTranslateButton {
                         }
                     });
                 } else if (m.getReturnType() == int.class) {
-                    XposedHelpers.hookMethod(m, new AbstractMethodHook() {
+                    HMethod.hookMethod(m, new AbstractMethodHook() {
                         @Override
                         protected void afterMethod(MethodHookParam param) {
                             if (ConfigManager.unlockTranslateButton.isEnable())
@@ -180,8 +162,6 @@ public class UnlockTranslateButton {
     }
 
     // ── 3. TranslatorHelper / TranslateAlert — bypass language-match guard ────
-    // When you tap Translate, Telegram checks if src-lang == dst-lang and skips.
-    // Hook the comparison so it always proceeds.
     private static void hookTranslatorHelper() {
         for (String cls : new String[]{
             "org.telegram.ui.Components.TranslateAlert",
@@ -196,21 +176,21 @@ public class UnlockTranslateButton {
                 for (Method m : c.getDeclaredMethods()) {
                     String lower = m.getName().toLowerCase();
 
-                    // Language-sameness / "nothing to translate" check — always say no
+                    // "same language?" → always false so translate always runs
                     if ((lower.contains("same") || lower.contains("match") || lower.contains("equal"))
                         && lower.contains("lang") && m.getReturnType() == boolean.class) {
-                        XposedHelpers.hookMethod(m, new AbstractMethodHook() {
+                        HMethod.hookMethod(m, new AbstractMethodHook() {
                             @Override
                             protected void afterMethod(MethodHookParam param) {
                                 if (ConfigManager.unlockTranslateButton.isEnable())
-                                    param.setResult(false); // "same language?" → no, always translate
+                                    param.setResult(false);
                             }
                         });
                     }
 
-                    // isPremium checks inside the translate flow — force true
+                    // isPremium checks inside translate flow — force true
                     if (lower.contains("premium") && m.getReturnType() == boolean.class) {
-                        XposedHelpers.hookMethod(m, new AbstractMethodHook() {
+                        HMethod.hookMethod(m, new AbstractMethodHook() {
                             @Override
                             protected void afterMethod(MethodHookParam param) {
                                 if (ConfigManager.unlockTranslateButton.isEnable())
@@ -222,7 +202,7 @@ public class UnlockTranslateButton {
                     // isTranslateEnabled / canShowTranslate
                     if ((lower.contains("translat") || lower.contains("showtranslate"))
                         && m.getReturnType() == boolean.class) {
-                        XposedHelpers.hookMethod(m, new AbstractMethodHook() {
+                        HMethod.hookMethod(m, new AbstractMethodHook() {
                             @Override
                             protected void afterMethod(MethodHookParam param) {
                                 if (ConfigManager.unlockTranslateButton.isEnable())
