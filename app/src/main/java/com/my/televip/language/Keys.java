@@ -116,4 +116,6 @@ public class Keys {
     public static final String SpoofDeviceInfo         = "SpoofDeviceInfo";
     public static final String MessageSchedulerBypass  = "MessageSchedulerBypass";
     public static final String UnlockTranslateButton   = "UnlockTranslateButton";
+
+    public static final String ShowRealLastSeen        = "ShowRealLastSeen";
 }
