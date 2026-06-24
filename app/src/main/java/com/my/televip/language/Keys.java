@@ -99,19 +99,11 @@ public class Keys {
     public static final String NoSponsoredMessages  = "NoSponsoredMessages";
     public static final String AntiPhoneCall        = "AntiPhoneCall";
     public static final String NoForwardRestriction = "NoForwardRestriction";
-    public static final String ShowReactionsList    = "ShowReactionsList";
-    public static final String NoReactionsAvailable = "NoReactionsAvailable";
     public static final String IgnoreBlocked        = "IgnoreBlocked";
     public static final String TeleVipAi            = "TeleVipAi";
 
     // New features
     public static final String ShowOthersPhone        = "ShowOthersPhone";
-    public static final String GhostEdit              = "GhostEdit";
-    public static final String GhostEditPasteHint     = "GhostEditPasteHint";
-    public static final String BypassReactionsView    = "BypassReactionsView";
-    public static final String SaveToSavedMessages     = "SaveToSavedMessages";
-    public static final String SaveToSavedMessagesOk   = "SaveToSavedMessagesOk";
-    public static final String SaveToSavedMessagesFail = "SaveToSavedMessagesFail";
     public static final String BypassSeenBy            = "BypassSeenBy";
     public static final String ScreenshotBypass        = "ScreenshotBypass";
     public static final String AnonymousForward        = "AnonymousForward";
@@ -119,13 +111,4 @@ public class Keys {
     public static final String NoFloodWait             = "NoFloodWait";
     public static final String UnlockGroupInput        = "UnlockGroupInput";
     public static final String SuppressBanKick         = "SuppressBanKick";
-
-    // Latest features
-    public static final String MessageSchedulerBypass  = "MessageSchedulerBypass";
-    public static final String UnlockTranslateButton   = "UnlockTranslateButton";
-
-    // Privacy & Identity
-    public static final String AntiContactSync = "AntiContactSync";
-    public static final String SpoofDeviceInfo = "SpoofDeviceInfo";
-    public static final String PrivacyForcer   = "PrivacyForcer";
 }
