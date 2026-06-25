@@ -1,8 +1,6 @@
 package com.my.televip.features;
 
 import android.graphics.Color;
-import android.graphics.Paint;
-import android.graphics.RectF;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
@@ -12,10 +10,10 @@ import android.text.Spanned;
 import android.text.TextPaint;
 import android.text.TextUtils;
 import android.text.style.ForegroundColorSpan;
-import android.util.Log;
 import android.util.SparseArray;
-import android.view.View; 
-import android.graphics.Canvas; 
+import android.view.View;
+import android.graphics.Canvas;
+import android.graphics.Rect; // تم إضافته للحصول على أبعاد الفقاعة
 
 import com.my.televip.Class.ClassLoad;
 import com.my.televip.Class.ClassNames;
@@ -44,9 +42,11 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 
-import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 
+/**
+ * DontWipeMessages — single-file feature
+ */
 public class DontWipeMessages {
 
     public static final int FLAG_DELETED = 1 << 31;
@@ -135,7 +135,10 @@ public class DontWipeMessages {
                         && m.getParameterTypes()[4] == int.class)
                     found.add(m.getName());
 
-            if (found.size() != 1) return;
+            if (found.size() != 1) {
+                Logger.w("DontWipeMessages: processUpdateArray candidates=" + found.size());
+                return;
+            }
 
             HMethod.hookMethod(
                     ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER),
@@ -273,7 +276,7 @@ public class DontWipeMessages {
                                 }
                                 @Override
                                 protected void afterMethod(MethodHookParam param) {
-                                    isMyOwnDelete = false; 
+                                    isMyOwnDelete = false;
                                 }
                             }
                     ));
@@ -401,60 +404,82 @@ public class DontWipeMessages {
         }
     }
 
+    // ══════════════════════════════════════════════════════════════
+    //  🛠️ التطوير الجديد لدالة التلوين مع اللوجات المخصصة للـ Termux
+    // ══════════════════════════════════════════════════════════════
     private static void hookUIBackground() {
         try {
             if (ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL) == null) return;
 
+            // نقوم بعمل الهوك بعد تنفيذ الدالة الأصلية (afterMethod) لضمان عدم قيام التيلجرام بالرسم فوق تعديلنا
             HMethod.hookMethod(
                     ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL), "onDraw", Canvas.class,
                     new AbstractMethodHook() {
-                        
-                        // استخدام afterMethod للرسم فوق الرسالة 
                         @Override
                         protected void afterMethod(MethodHookParam param) {
                             try {
                                 if (!isEnabled()) return;
 
-                                Method getMessageObject = param.thisObject.getClass().getMethod("getMessageObject");
-                                Object msgObj = getMessageObject.invoke(param.thisObject);
+                                Canvas canvas = (Canvas) param.args[0];
+                                if (canvas == null) return;
+
+                                // محاولة جلب الـ MessageObject بأكثر من طريقة لضمان التوافق التام
+                                Object msgObj = null;
+                                try {
+                                    Method getMessageObject = param.thisObject.getClass().getMethod("getMessageObject");
+                                    msgObj = getMessageObject.invoke(param.thisObject);
+                                } catch (Throwable t) {
+                                    // طريقة بديلة عبر الفيلد المباشر إذا فشلت الميثود
+                                    try {
+                                        String msgObjField = AutomationResolver.resolve("ChatMessageCell", "currentMessageObject", AutomationResolver.ResolverType.Field);
+                                        msgObj = XposedHelpers.getObjectField(param.thisObject, msgObjField);
+                                    } catch (Throwable ignored) {}
+                                }
+
                                 if (msgObj == null) return;
 
                                 TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
                                 if (owner == null) return;
 
+                                // فحص ما إذا كانت الرسالة تحمل علم الحذف
                                 if ((owner.getFlags() & FLAG_DELETED) != 0) {
-                                    Canvas canvas = (Canvas) param.args[0];
-                                    View view = (View) param.thisObject;
                                     
-                                    if (canvas != null && view != null) {
-                                        int viewWidth = view.getWidth();
-                                        int viewHeight = view.getHeight();
-                                        
-                                        // طباعة اللوج باستخدام Log.e و XposedBridge لضمان ظهورها
-                                        Log.e("TeleVip-Draw", "=== Deleted Message Detected ===");
-                                        Log.e("TeleVip-Draw", "View Dims: W=" + viewWidth + ", H=" + viewHeight);
-                                        XposedBridge.log("TeleVip-Draw: View Dims: W=" + viewWidth + ", H=" + viewHeight);
+                                    // ── [تيرمكس لوج 1]: تأكيد الدخول والدقة
+                                    android.util.Log.d("TeleVip-Termux", "╔════════════════════════════════════════╗");
+                                    android.util.Log.d("TeleVip-Termux", "║ [DETECTED] Deleted message onDraw! ID: " + owner.getID());
 
-                                        try {
-                                            int bgWidth = XposedHelpers.getIntField(param.thisObject, "backgroundWidth");
-                                            Log.e("TeleVip-Draw", "Bubble Width=" + bgWidth);
-                                            XposedBridge.log("TeleVip-Draw: Bubble Width=" + bgWidth);
-                                        } catch (Throwable t) {
-                                            Log.e("TeleVip-Draw", "Could not find backgroundWidth");
-                                        }
-
-                                        // الرسم فوق حدود الـ View بخلفية حمراء شفافة
-                                        Paint paint = new Paint();
-                                        paint.setColor(Color.argb(40, 255, 80, 80)); 
-                                        paint.setStyle(Paint.Style.FILL);
-                                        RectF rect = new RectF(0, 0, viewWidth, viewHeight); 
+                                    // جلب حقول أبعاد الخلفية من كود التيلجرام (مهمة جداً لمعرفة مكان الرسم)
+                                    int backgroundLeft = 0, backgroundRight = 0, backgroundTop = 0, backgroundBottom = 0;
+                                    try {
+                                        backgroundLeft = XposedHelpers.getIntField(param.thisObject, "backgroundLeft");
+                                        backgroundRight = XposedHelpers.getIntField(param.thisObject, "backgroundRight");
+                                        backgroundTop = XposedHelpers.getIntField(param.thisObject, "backgroundTop");
+                                        backgroundBottom = XposedHelpers.getIntField(param.thisObject, "backgroundBottom");
                                         
-                                        canvas.drawRect(rect, paint);
-                                        Log.e("TeleVip-Draw", "Successfully drawn red overlay.");
+                                        // ── [تيرمكس لوج 2]: إرسال الأبعاد الدقيقة للفقاعة للتيرمكس
+                                        android.util.Log.d("TeleVip-Termux", "║ [BOUNDS] L:" + backgroundLeft + " R:" + backgroundRight + " T:" + backgroundTop + " B:" + backgroundBottom);
+                                    } catch (Throwable e) {
+                                        android.util.Log.d("TeleVip-Termux", "║ [BOUNDS] Failed to read background fields: " + e.getMessage());
                                     }
+
+                                    // الرسم الفعلي: صبغ فقاعة الرسالة فقط بدلاً من كامل الشاشة لتفادي الاختفاء
+                                    if (backgroundRight > backgroundLeft && backgroundBottom > backgroundTop) {
+                                        android.graphics.Paint paint = new android.graphics.Paint();
+                                        paint.setColor(Color.argb(45, 255, 50, 50)); // لون أحمر شفاف خفيف
+                                        paint.setStyle(android.graphics.Paint.Style.FILL);
+                                        
+                                        // رسم المستطيل فوق فقاعة الرسالة تماماً
+                                        canvas.drawRect(backgroundLeft, backgroundTop, backgroundRight, backgroundBottom, paint);
+                                        android.util.Log.d("TeleVip-Termux", "║ [SUCCESS] Red overlay drawn successfully inside bounds.");
+                                    } else {
+                                        // إذا كانت الحقول مجهولة، نصبغ الـ View كخيار احتياطي
+                                        canvas.drawColor(Color.argb(35, 255, 80, 80));
+                                        android.util.Log.d("TeleVip-Termux", "║ [FALLBACK] Drawn full canvas color due to zero bounds.");
+                                    }
+                                    android.util.Log.d("TeleVip-Termux", "╚════════════════════════════════════════╝");
                                 }
                             } catch (Throwable e) {
-                                Log.e("TeleVip-Draw", "Error: " + e.getMessage());
+                                android.util.Log.e("TeleVip-Termux", "Error inside hookUIBackground: ", e);
                             }
                         }
                     });
