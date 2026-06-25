@@ -1,4 +1,4 @@
-Package com.my.televip.features;
+package com.my.televip.features;
 
 import android.graphics.Color;
 import android.os.Handler;
