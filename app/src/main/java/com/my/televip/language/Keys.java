@@ -20,8 +20,6 @@ public class Keys {
     public static final String HideOnline = "HideOnline";
     public static final String PreventMedia = "PreventMedia";
     public static final String HidePhone = "HidePhone";
-    public static final String ShowDeletedMessages = "ShowDeletedMessages";
-    public static final String Deleted = "Deleted";
     public static final String Copied = "Copied";
     public static final String UserOffline = "UserOffline";
     public static final String DisableStories = "DisableStories";
@@ -105,7 +103,6 @@ public class Keys {
     public static final String ScreenshotBypass       = "ScreenshotBypass";
     public static final String AnonymousForward       = "AnonymousForward";
     public static final String NoMessageLimit         = "NoMessageLimit";
-    public static final String NoFloodWait            = "NoFloodWait";
     public static final String UnlockGroupInput       = "UnlockGroupInput";
     public static final String SuppressBanKick        = "SuppressBanKick";
     public static final String AntiContactSync        = "AntiContactSync";
@@ -116,6 +113,4 @@ public class Keys {
     public static final String ShowRealLastSeen       = "ShowRealLastSeen";
     public static final String HideEditedMark         = "HideEditedMark";
 
-    public static final String ShowHiddenMembers = "ShowHiddenMembers";
-    public static final String ShowAllReactions  = "ShowAllReactions";
 }

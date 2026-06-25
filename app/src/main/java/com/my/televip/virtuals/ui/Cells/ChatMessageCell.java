@@ -18,7 +18,6 @@ import com.my.televip.Class.ClassLoad;
 import com.my.televip.Class.ClassNames;
 import com.my.televip.Configs.ConfigManager;
 import com.my.televip.base.AbstractMethodHook;
-import com.my.televip.features.ShowDeletedMessages;
 import com.my.televip.hooks.HMethod;
 import com.my.televip.language.Keys;
 import com.my.televip.language.Translator;
@@ -163,11 +162,7 @@ public class ChatMessageCell {
      * Also caches the ID into deletedIds for faster subsequent checks.
      */
     private static boolean isDeleted(TLRPC.Message owner) {
-        if ((owner.getFlags() & ShowDeletedMessages.FLAG_DELETED) != 0) {
-            ShowDeletedMessages.deletedIds.add(owner.getID());
-            return true;
-        }
-        return ShowDeletedMessages.deletedIds.contains(owner.getID());
+        return false;
     }
 
     /**

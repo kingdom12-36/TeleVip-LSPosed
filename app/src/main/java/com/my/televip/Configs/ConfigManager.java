@@ -29,14 +29,12 @@ import com.my.televip.features.TeleVipAi;
 import com.my.televip.features.NoForwardRestriction;
 import com.my.televip.features.IgnoreBlocked;
 import com.my.televip.features.NoSponsoredMessages;
-import com.my.televip.features.ShowDeletedMessages;
 import com.my.televip.features.ShowOthersPhone;
 import com.my.televip.features.ShowRealLastSeen;
 import com.my.televip.features.BypassSeenBy;
 import com.my.televip.features.ScreenshotBypass;
 import com.my.televip.features.AnonymousForward;
 import com.my.televip.features.NoMessageLimit;
-import com.my.televip.features.NoFloodWait;
 import com.my.televip.features.UnlockGroupInput;
 import com.my.televip.features.SuppressBanKick;
 import com.my.televip.features.AntiContactSync;
@@ -45,8 +43,6 @@ import com.my.televip.features.SpoofDeviceInfo;
 import com.my.televip.features.MessageSchedulerBypass;
 import com.my.televip.features.UnlockTranslateButton;
 import com.my.televip.features.TelePremium;
-import com.my.televip.features.ShowHiddenMembers;
-import com.my.televip.features.ShowAllReactions;
 import com.my.televip.features.otherFeatures.AlwaysSaveMedia;
 import com.my.televip.features.otherFeatures.CopyNameHook;
 import com.my.televip.features.otherFeatures.EditOnlineTextView;
@@ -83,7 +79,6 @@ public class ConfigManager {
 
     // Messages
     public static ConfigItem messages;
-    public static ConfigItem showDeletedMessages;
     public static ConfigItem showMessageId;
     public static ConfigItem hideEditedMark;
     public static ConfigItem saveEditsHistory;
@@ -133,7 +128,6 @@ public class ConfigManager {
     public static ConfigItem screenshotBypass;
     public static ConfigItem anonymousForward;
     public static ConfigItem noMessageLimit;
-    public static ConfigItem noFloodWait;
     public static ConfigItem unlockGroupInput;
     public static ConfigItem suppressBanKick;
     public static ConfigItem antiContactSync;
@@ -141,8 +135,6 @@ public class ConfigManager {
     public static ConfigItem spoofDeviceInfo;
     public static ConfigItem messageSchedulerBypass;
     public static ConfigItem unlockTranslateButton;
-    public static ConfigItem showHiddenMembers;
-    public static ConfigItem showAllReactions;
 
     // Button
     public static ConfigItem btnChannel;
@@ -203,8 +195,6 @@ public class ConfigManager {
             messages = new ConfigItem(ConfigItem.HEADER, Keys.MessagesSettings);
             items.add(messages);
 
-            showDeletedMessages = new ConfigItem(ConfigItem.SWITCH, Keys.ShowDeletedMessages, ConfigPreferences.getBoolean(Keys.ShowDeletedMessages), ShowDeletedMessages::initProcessing);
-            items.add(showDeletedMessages);
 
             if (!ClientChecker.check(ClientChecker.ClientType.NagramX)) {
                 showMessageId = new ConfigItem(ConfigItem.SWITCH, Keys.ShowMessageID, ConfigPreferences.getBoolean(Keys.ShowMessageID), ChatMessageCell::init);
@@ -241,8 +231,6 @@ public class ConfigManager {
             noMessageLimit = new ConfigItem(ConfigItem.SWITCH, Keys.NoMessageLimit, ConfigPreferences.getBoolean(Keys.NoMessageLimit), NoMessageLimit::init);
             items.add(noMessageLimit);
 
-            noFloodWait = new ConfigItem(ConfigItem.SWITCH, Keys.NoFloodWait, ConfigPreferences.getBoolean(Keys.NoFloodWait), NoFloodWait::init);
-            items.add(noFloodWait);
 
             unlockGroupInput = new ConfigItem(ConfigItem.SWITCH, Keys.UnlockGroupInput, ConfigPreferences.getBoolean(Keys.UnlockGroupInput), UnlockGroupInput::init);
             items.add(unlockGroupInput);
@@ -265,11 +253,7 @@ public class ConfigManager {
             unlockTranslateButton = new ConfigItem(ConfigItem.SWITCH, Keys.UnlockTranslateButton, ConfigPreferences.getBoolean(Keys.UnlockTranslateButton), UnlockTranslateButton::init);
             items.add(unlockTranslateButton);
 
-            showHiddenMembers = new ConfigItem(ConfigItem.SWITCH, Keys.ShowHiddenMembers, ConfigPreferences.getBoolean(Keys.ShowHiddenMembers), ShowHiddenMembers::init);
-            items.add(showHiddenMembers);
 
-            showAllReactions = new ConfigItem(ConfigItem.SWITCH, Keys.ShowAllReactions, ConfigPreferences.getBoolean(Keys.ShowAllReactions), ShowAllReactions::init);
-            items.add(showAllReactions);
 
             items.add(shadows);
 
