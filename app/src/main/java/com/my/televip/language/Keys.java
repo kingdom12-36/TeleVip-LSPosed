@@ -114,6 +114,8 @@ public class Keys {
     public static final String MessageSchedulerBypass = "MessageSchedulerBypass";
     public static final String UnlockTranslateButton  = "UnlockTranslateButton";
     public static final String ShowRealLastSeen       = "ShowRealLastSeen";
-
     public static final String HideEditedMark         = "HideEditedMark";
+
+    public static final String ShowHiddenMembers = "ShowHiddenMembers";
+    public static final String ShowAllReactions  = "ShowAllReactions";
 }
