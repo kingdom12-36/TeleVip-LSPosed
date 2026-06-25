@@ -193,17 +193,18 @@ public class ConfigManager {
 
             items.add(shadows);
 
-            // Messages
+                        // Messages
             messages = new ConfigItem(ConfigItem.HEADER, Keys.MessagesSettings);
             items.add(messages);
 
             dontWipeMessages = new ConfigItem(ConfigItem.SWITCH, Keys.DontWipeMessages, ConfigPreferences.getBoolean(Keys.DontWipeMessages), DontWipeMessages::init);
-
+            items.add(dontWipeMessages); // <--- هذا هو السطر الذي أضفناه هنا
 
             if (!ClientChecker.check(ClientChecker.ClientType.NagramX)) {
                 showMessageId = new ConfigItem(ConfigItem.SWITCH, Keys.ShowMessageID, ConfigPreferences.getBoolean(Keys.ShowMessageID), ChatMessageCell::init);
                 items.add(showMessageId);
             }
+
 
             hideEditedMark = new ConfigItem(ConfigItem.SWITCH, Keys.HideEditedMark, ConfigPreferences.getBoolean(Keys.HideEditedMark), HideEditedMark::init);
             items.add(hideEditedMark);
