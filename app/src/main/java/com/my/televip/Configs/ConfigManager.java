@@ -45,6 +45,8 @@ import com.my.televip.features.SpoofDeviceInfo;
 import com.my.televip.features.MessageSchedulerBypass;
 import com.my.televip.features.UnlockTranslateButton;
 import com.my.televip.features.TelePremium;
+import com.my.televip.features.ShowHiddenMembers;
+import com.my.televip.features.ShowAllReactions;
 import com.my.televip.features.otherFeatures.AlwaysSaveMedia;
 import com.my.televip.features.otherFeatures.CopyNameHook;
 import com.my.televip.features.otherFeatures.EditOnlineTextView;
@@ -139,6 +141,8 @@ public class ConfigManager {
     public static ConfigItem spoofDeviceInfo;
     public static ConfigItem messageSchedulerBypass;
     public static ConfigItem unlockTranslateButton;
+    public static ConfigItem showHiddenMembers;
+    public static ConfigItem showAllReactions;
 
     // Button
     public static ConfigItem btnChannel;
@@ -260,6 +264,12 @@ public class ConfigManager {
 
             unlockTranslateButton = new ConfigItem(ConfigItem.SWITCH, Keys.UnlockTranslateButton, ConfigPreferences.getBoolean(Keys.UnlockTranslateButton), UnlockTranslateButton::init);
             items.add(unlockTranslateButton);
+
+            showHiddenMembers = new ConfigItem(ConfigItem.SWITCH, Keys.ShowHiddenMembers, ConfigPreferences.getBoolean(Keys.ShowHiddenMembers), ShowHiddenMembers::init);
+            items.add(showHiddenMembers);
+
+            showAllReactions = new ConfigItem(ConfigItem.SWITCH, Keys.ShowAllReactions, ConfigPreferences.getBoolean(Keys.ShowAllReactions), ShowAllReactions::init);
+            items.add(showAllReactions);
 
             items.add(shadows);
 
