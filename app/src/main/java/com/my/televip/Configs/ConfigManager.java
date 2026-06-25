@@ -14,6 +14,7 @@ import com.my.televip.features.EnableSavingStories;
 import com.my.televip.features.FixTLError;
 import com.my.televip.features.GhostMode;
 import com.my.televip.features.HidePhone;
+import com.my.televip.features.HideEditedMark;
 import com.my.televip.features.HidePinnedMessages;
 import com.my.televip.features.HideProxySponsor;
 import com.my.televip.features.HideUpdateApp;
@@ -82,6 +83,7 @@ public class ConfigManager {
     public static ConfigItem messages;
     public static ConfigItem showDeletedMessages;
     public static ConfigItem showMessageId;
+    public static ConfigItem hideEditedMark;
     public static ConfigItem saveEditsHistory;
     public static ConfigItem bypassSlowMode;
 
@@ -204,6 +206,9 @@ public class ConfigManager {
                 showMessageId = new ConfigItem(ConfigItem.SWITCH, Keys.ShowMessageID, ConfigPreferences.getBoolean(Keys.ShowMessageID), ChatMessageCell::init);
                 items.add(showMessageId);
             }
+
+            hideEditedMark = new ConfigItem(ConfigItem.SWITCH, Keys.HideEditedMark, ConfigPreferences.getBoolean(Keys.HideEditedMark), HideEditedMark::init);
+            items.add(hideEditedMark);
 
             saveEditsHistory = new ConfigItem(ConfigItem.SWITCH, Keys.SaveEditsHistory, ConfigPreferences.getBoolean(Keys.SaveEditsHistory), () -> SaveEditsHistory.init(context));
             items.add(saveEditsHistory);
