@@ -197,8 +197,8 @@ public class ConfigManager {
             messages = new ConfigItem(ConfigItem.HEADER, Keys.MessagesSettings);
             items.add(messages);
 
-            dontWipeMessages = new ConfigItem(ConfigItem.SWITCH, Keys.DontWipeMessagesTitle, ConfigPreferences.getBoolean(Keys.DontWipeMessagesTitle), DontWipeMessages::init);
-            items.add(dontWipeMessages);
+            dontWipeMessages = new ConfigItem(ConfigItem.SWITCH, Keys.DontWipeMessages, ConfigPreferences.getBoolean(Keys.DontWipeMessages), DontWipeMessages::init);
+
 
             if (!ClientChecker.check(ClientChecker.ClientType.NagramX)) {
                 showMessageId = new ConfigItem(ConfigItem.SWITCH, Keys.ShowMessageID, ConfigPreferences.getBoolean(Keys.ShowMessageID), ChatMessageCell::init);
