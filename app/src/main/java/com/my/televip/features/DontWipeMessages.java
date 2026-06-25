@@ -14,8 +14,8 @@ import android.text.TextUtils;
 import android.text.style.ForegroundColorSpan;
 import android.util.Log;
 import android.util.SparseArray;
-import android.view.View;
-import android.graphics.Canvas;
+import android.view.View; 
+import android.graphics.Canvas; 
 
 import com.my.televip.Class.ClassLoad;
 import com.my.televip.Class.ClassNames;
@@ -44,6 +44,7 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 
+import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 
 public class DontWipeMessages {
@@ -60,7 +61,6 @@ public class DontWipeMessages {
     }
 
     private static void persistDeletedFlag(MessagesStorage messagesStorage, long dialogId, ArrayList<Integer> delMsg) {
-        // [الكود الأصلي كما هو بدون تعديل]
         try {
             dbHandler.post(() -> {
                 try {
@@ -121,29 +121,286 @@ public class DontWipeMessages {
     }
 
     private static void hookDeletionEvents() {
-        // [الكود الأصلي كما هو]
-        // ... تم اختصاره في الشرح لكنه موجود في ملفك الأصلي ...
+        try {
+            if (ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER) == null) return;
+
+            Method[] methods = ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER).getDeclaredMethods();
+            List<String> found = new ArrayList<>();
+            for (Method m : methods)
+                if (m.getParameterCount() == 5
+                        && m.getParameterTypes()[0] == ArrayList.class
+                        && m.getParameterTypes()[1] == ArrayList.class
+                        && m.getParameterTypes()[2] == ArrayList.class
+                        && m.getParameterTypes()[3] == boolean.class
+                        && m.getParameterTypes()[4] == int.class)
+                    found.add(m.getName());
+
+            if (found.size() != 1) return;
+
+            HMethod.hookMethod(
+                    ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER),
+                    found.get(0),
+                    ArrayList.class, ArrayList.class, ArrayList.class, boolean.class, int.class,
+                    new AbstractMethodHook() {
+                        @Override
+                        protected void beforeMethod(MethodHookParam param) {
+                            try {
+                                if (!isEnabled()) return;
+
+                                MessagesController mc = new MessagesController(param.thisObject);
+                                List<Object> updates = Utils.castList(param.args[0], Object.class);
+                                if (updates == null || updates.isEmpty()) return;
+
+                                ArrayList<Object> keep = new ArrayList<>();
+
+                                for (Object item : updates) {
+                                    boolean isChannel = item.getClass().equals(
+                                            ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_CHANNEL_MESSAGES));
+                                    boolean isDirect  = item.getClass().equals(
+                                            ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_MESSAGES));
+
+                                    if (isChannel) {
+                                        TLRPC.TL_updateDeleteChannelMessages upd =
+                                                new TLRPC.TL_updateDeleteChannelMessages(item);
+                                        long dialogId = -upd.getChannelID();
+
+                                        LongSparseArray dialogMsg = mc.getDialogMessage();
+                                        ArrayList<Object> live = dialogMsg.get(dialogId);
+                                        if (live != null)
+                                            for (Object o : live) {
+                                                TLRPC.Message owner = new MessageObject(o).getMessageOwner();
+                                                if (upd.getMessages().contains(owner.getID()))
+                                                    owner.setFlags(owner.getFlags() | FLAG_DELETED);
+                                            }
+
+                                        persistDeletedFlag(mc.getMessagesStorage(), dialogId, upd.getMessages());
+
+                                    } else if (isDirect) {
+                                        TLRPC.TL_updateDeleteMessages upd =
+                                                new TLRPC.TL_updateDeleteMessages(item);
+
+                                        SparseArray<Object> byId = mc.getDialogMessagesByIds();
+                                        for (int id : upd.getMessages()) {
+                                            Object o = byId.get(id);
+                                            if (o != null) {
+                                                TLRPC.Message owner = new MessageObject(o).getMessageOwner();
+                                                owner.setFlags(owner.getFlags() | FLAG_DELETED);
+                                            }
+                                        }
+
+                                        persistDeletedFlag(mc.getMessagesStorage(), 0, upd.getMessages());
+
+                                    } else {
+                                        keep.add(item);
+                                    }
+                                }
+
+                                param.args[0] = keep;
+
+                            } catch (Throwable e) {
+                                Logger.e(e);
+                            }
+                        }
+                    });
+        } catch (Throwable e) {
+            Logger.e(e);
+        }
     }
 
     private static void hookBlockDbDeletion() {
-        // [الكود الأصلي كما هو]
+        try {
+            if (ClassLoad.getClass(ClassNames.MESSAGES_STORAGE) == null) return;
+
+            HMethod.hookMethod(
+                    ClassLoad.getClass(ClassNames.MESSAGES_STORAGE),
+                    AutomationResolver.resolve("MessagesStorage", "markMessagesAsDeleted",
+                            AutomationResolver.ResolverType.Method),
+                    AutomationResolver.merge(
+                            AutomationResolver.resolveObject("markMessagesAsDeleted",
+                                    new Class[]{long.class, ArrayList.class, boolean.class,
+                                            boolean.class, int.class, int.class}),
+                            new AbstractMethodHook() {
+                                @Override
+                                protected void beforeMethod(MethodHookParam param) {
+                                    if (isEnabled() && !isMyOwnDelete)
+                                        param.setResult(null);
+                                }
+                            }
+                    ));
+        } catch (Throwable e) {
+            Logger.e(e);
+        }
     }
 
     private static void hookOwnDeletePassthrough() {
-         // [الكود الأصلي كما هو]
+        try {
+            if (ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER) == null) return;
+
+            HMethod.hookMethod(
+                    ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER),
+                    AutomationResolver.resolve("MessagesController", "deleteMessages",
+                            AutomationResolver.ResolverType.Method),
+                    AutomationResolver.merge(
+                            AutomationResolver.resolveObject("deleteMessages", new Class[]{
+                                    ArrayList.class, ArrayList.class,
+                                    ClassLoad.getClass(ClassNames.TLRPC_ENCRYPTED_CHAT),
+                                    long.class, boolean.class, int.class, boolean.class,
+                                    long.class, ClassLoad.getClass(ClassNames.TL_OBJECT),
+                                    int.class, boolean.class, int.class}),
+                            new AbstractMethodHook() {
+                                @Override
+                                protected void beforeMethod(MethodHookParam param) {
+                                    isMyOwnDelete = true;
+                                }
+                            }
+                    ));
+
+            HMethod.hookMethod(
+                    ClassLoad.getClass(ClassNames.NOTIFICATION_CENTER),
+                    AutomationResolver.resolve("NotificationCenter", "postNotificationName",
+                            AutomationResolver.ResolverType.Method),
+                    AutomationResolver.merge(
+                            AutomationResolver.resolveObject("postNotificationName",
+                                    new Class[]{int.class, Object[].class}),
+                            new AbstractMethodHook() {
+                                @Override
+                                protected void beforeMethod(MethodHookParam param) {
+                                    if (isEnabled() && !isMyOwnDelete) {
+                                        int id = (int) param.args[0];
+                                        if (id == NotificationCenter.getMessagesDeleted())
+                                            param.setResult(null);
+                                    }
+                                }
+                                @Override
+                                protected void afterMethod(MethodHookParam param) {
+                                    isMyOwnDelete = false; 
+                                }
+                            }
+                    ));
+
+            if (ClassLoad.getClass(ClassNames.NOTIFICATIONS_CONTROLLER) != null)
+                for (Method m : ClassLoad.getClass(ClassNames.NOTIFICATIONS_CONTROLLER).getDeclaredMethods())
+                    if (m.getName().equals(AutomationResolver.resolve("NotificationsController",
+                            "removeDeletedMessagesFromNotifications",
+                            AutomationResolver.ResolverType.Method))) {
+                        HMethod.hookMethod(m, new AbstractMethodHook() {
+                            @Override
+                            protected void beforeMethod(MethodHookParam param) {
+                                if (isEnabled()) param.setResult(null);
+                            }
+                        });
+                        break;
+                    }
+
+        } catch (Throwable e) {
+            Logger.e(e);
+        }
     }
 
     private static void hookUI() {
-         // [الكود الأصلي كما هو]
+        try {
+            if (ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL) == null) return;
+
+            HMethod.hookMethod(
+                    ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL),
+                    AutomationResolver.resolve("ChatMessageCell", "measureTime",
+                            AutomationResolver.ResolverType.Method),
+                    AutomationResolver.merge(
+                            AutomationResolver.resolveObject("measureTime",
+                                    new Class[]{ClassLoad.getClass(ClassNames.MESSAGE_OBJECT)}),
+                            new AbstractMethodHook() {
+                                @Override
+                                protected void afterMethod(MethodHookParam param) {
+                                    try {
+                                        if (!isEnabled()) return;
+
+                                        Object msgArg = param.args[0];
+                                        if (msgArg == null) return;
+
+                                        TLRPC.Message owner = new MessageObject(msgArg).getMessageOwner();
+                                        if (owner == null) return;
+                                        if ((owner.getFlags() & FLAG_DELETED) == 0) return;
+
+                                        String labelText = "✕ " + Translator.get(Keys.DontWipeMessages);
+                                        SpannableStringBuilder label = new SpannableStringBuilder(labelText + " ");
+                                        label.setSpan(
+                                                new ForegroundColorSpan(Color.rgb(220, 50, 50)),
+                                                0, labelText.length(),
+                                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+
+                                        String resolvedField = AutomationResolver.resolve(
+                                                "ChatMessageCell", "currentTimeString",
+                                                AutomationResolver.ResolverType.Field);
+
+                                        Object rawTime = null;
+                                        try {
+                                            rawTime = XposedHelpers.getObjectField(param.thisObject, resolvedField);
+                                        } catch (Throwable ignored) {
+                                            try {
+                                                rawTime = XposedHelpers.getObjectField(param.thisObject, "currentTimeString");
+                                                resolvedField = "currentTimeString";
+                                            } catch (Throwable e2) {
+                                                Logger.e(e2);
+                                                return;
+                                            }
+                                        }
+
+                                        SpannableStringBuilder newTime;
+                                        if (rawTime instanceof SpannableStringBuilder) {
+                                            newTime = new SpannableStringBuilder(label)
+                                                    .append((SpannableStringBuilder) rawTime);
+                                        } else {
+                                            newTime = new SpannableStringBuilder(label)
+                                                    .append(rawTime != null ? rawTime.toString() : "");
+                                        }
+
+                                        XposedHelpers.setObjectField(param.thisObject, resolvedField, newTime);
+
+                                        TextPaint paint = Theme.getTextPaint();
+                                        if (paint != null) {
+                                            ChatMessageCellDefault cell = new ChatMessageCellDefault(param.thisObject) {};
+                                            int extra = (int) Math.ceil(paint.measureText(label, 0, label.length()));
+                                            cell.setTimeTextWidth(cell.getTimeTextWidth() + extra);
+                                            cell.setTimeWidth(cell.getTimeWidth() + extra);
+                                        }
+
+                                    } catch (Throwable e) {
+                                        Logger.e(e);
+                                    }
+                                }
+                            }
+                    ));
+        } catch (Throwable e) {
+            Logger.e(e);
+        }
     }
 
     private static void hookAutoDownload() {
-         // [الكود الأصلي كما هو]
+        try {
+            if (ClassLoad.getClass(ClassNames.DOWNLOAD_CONTROLLER) == null) return;
+
+            HMethod.hookMethod(
+                    ClassLoad.getClass(ClassNames.DOWNLOAD_CONTROLLER),
+                    AutomationResolver.resolve("DownloadController", "canDownloadMedia",
+                            AutomationResolver.ResolverType.Method),
+                    ClassLoad.getClass(ClassNames.TL_MESSAGE),
+                    new AbstractMethodHook() {
+                        @Override
+                        protected void beforeMethod(MethodHookParam param) {
+                            try {
+                                TLRPC.Message msg = new TLRPC.Message(param.args[0]);
+                                if ((msg.getFlags() & FLAG_DELETED) != 0)
+                                    param.setResult(0);
+                            } catch (Throwable e) {
+                                Logger.e(e);
+                            }
+                        }
+                    });
+        } catch (Throwable e) {
+            Logger.e(e);
+        }
     }
 
-    // ══════════════════════════════════════════════════════════════
-    //  تعديل الهوك الخاص بالتلوين وإضافة اللوج 🌟
-    // ══════════════════════════════════════════════════════════════
     private static void hookUIBackground() {
         try {
             if (ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL) == null) return;
@@ -152,72 +409,52 @@ public class DontWipeMessages {
                     ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL), "onDraw", Canvas.class,
                     new AbstractMethodHook() {
                         
-                        // تم التغيير من beforeMethod إلى afterMethod
-                        // لضمان الرسم فوق الرسالة وليس خلفها
+                        // استخدام afterMethod للرسم فوق الرسالة 
                         @Override
                         protected void afterMethod(MethodHookParam param) {
                             try {
                                 if (!isEnabled()) return;
 
-                                // 1. جلب الكائن
                                 Method getMessageObject = param.thisObject.getClass().getMethod("getMessageObject");
                                 Object msgObj = getMessageObject.invoke(param.thisObject);
                                 if (msgObj == null) return;
 
-                                // 2. التحقق من المالك
                                 TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
                                 if (owner == null) return;
 
-                                // 3. التحقق إذا كانت الرسالة محذوفة
                                 if ((owner.getFlags() & FLAG_DELETED) != 0) {
                                     Canvas canvas = (Canvas) param.args[0];
                                     View view = (View) param.thisObject;
                                     
                                     if (canvas != null && view != null) {
-                                        
-                                        // ==========================================
-                                        // طباعة لوج لتتبع الأبعاد ومكان الرسم
-                                        // ==========================================
                                         int viewWidth = view.getWidth();
                                         int viewHeight = view.getHeight();
-                                        Log.d("TeleVip-Draw", "=== Deleted Message Detected ===");
-                                        Log.d("TeleVip-Draw", "Total View Dimensions: Width=" + viewWidth + ", Height=" + viewHeight);
                                         
-                                        // محاولة قراءة حدود الفقاعة نفسها (Bubble) وليس كامل العرض
+                                        // طباعة اللوج باستخدام Log.e و XposedBridge لضمان ظهورها
+                                        Log.e("TeleVip-Draw", "=== Deleted Message Detected ===");
+                                        Log.e("TeleVip-Draw", "View Dims: W=" + viewWidth + ", H=" + viewHeight);
+                                        XposedBridge.log("TeleVip-Draw: View Dims: W=" + viewWidth + ", H=" + viewHeight);
+
                                         try {
-                                            // هذه المتغيرات تختلف حسب تشويش تيليجرام (Obfuscation)
-                                            // نستخدم XposedHelpers للبحث عن أبعاد الخلفية
-                                            int backgroundWidth = XposedHelpers.getIntField(param.thisObject, "backgroundWidth");
-                                            int backgroundHeight = (Integer) XposedHelpers.callMethod(param.thisObject, "getBackgroundDrawableHeight");
-                                            
-                                            Log.d("TeleVip-Draw", "Bubble Dimensions: Width=" + backgroundWidth + ", Height=" + backgroundHeight);
+                                            int bgWidth = XposedHelpers.getIntField(param.thisObject, "backgroundWidth");
+                                            Log.e("TeleVip-Draw", "Bubble Width=" + bgWidth);
+                                            XposedBridge.log("TeleVip-Draw: Bubble Width=" + bgWidth);
                                         } catch (Throwable t) {
-                                            Log.d("TeleVip-Draw", "Could not find exact bubble bounds (might be obfuscated). Error: " + t.getMessage());
+                                            Log.e("TeleVip-Draw", "Could not find backgroundWidth");
                                         }
 
-                                        // ==========================================
-                                        // الرسم: هنا نرسم طبقة حمراء فوق الخلية
-                                        // ==========================================
-                                        // الطريقة 1: تلوين كامل عرض الشاشة للرسالة
-                                        // canvas.drawColor(Color.argb(40, 255, 80, 80));
-                                        
-                                        // الطريقة 2 (أفضل وأكثر احترافية): رسم مستطيل فوق حدود الـ View فقط
+                                        // الرسم فوق حدود الـ View بخلفية حمراء شفافة
                                         Paint paint = new Paint();
-                                        paint.setColor(Color.argb(40, 255, 80, 80)); // أحمر شفاف
+                                        paint.setColor(Color.argb(40, 255, 80, 80)); 
                                         paint.setStyle(Paint.Style.FILL);
-                                        
-                                        // يمكنك تعديل هذه الإحداثيات لرسم خط جانبي مثلاً بدل تلوينها بالكامل
-                                        // RectF rect = new RectF(0, 0, 15, viewHeight); // خط أحمر على اليسار
-                                        RectF rect = new RectF(0, 0, viewWidth, viewHeight); // تغطية كاملة
+                                        RectF rect = new RectF(0, 0, viewWidth, viewHeight); 
                                         
                                         canvas.drawRect(rect, paint);
-                                        Log.d("TeleVip-Draw", "Successfully drawn red overlay.");
-                                    } else {
-                                        Log.e("TeleVip-Draw", "Canvas or View is NULL!");
+                                        Log.e("TeleVip-Draw", "Successfully drawn red overlay.");
                                     }
                                 }
                             } catch (Throwable e) {
-                                Log.e("TeleVip-Draw", "Error in hookUIBackground: " + e.getMessage());
+                                Log.e("TeleVip-Draw", "Error: " + e.getMessage());
                             }
                         }
                     });
