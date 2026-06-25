@@ -10,6 +10,13 @@ import android.text.TextUtils;
 import android.util.SparseArray;
 import android.view.View;
 
+// ══════════════════════════════════════════════════════════════
+// 🌟 إعادة الـ Imports الأساسية للجافا التي تسببت في المشكلة الأخيرة
+// ══════════════════════════════════════════════════════════════
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
+
 import com.my.televip.Class.ClassLoad;
 import com.my.televip.Class.ClassNames;
 import com.my.televip.Configs.ConfigManager;
@@ -25,16 +32,12 @@ import com.my.televip.virtuals.messenger.MessagesStorage;
 import com.my.televip.virtuals.messenger.NotificationCenter;
 import com.my.televip.virtuals.tgnet.NativeByteBuffer;
 import com.my.televip.virtuals.tgnet.TLRPC;
-
-// ══════════════════════════════════════════════════════════════
-// 🌟 تم إضافة الـ Imports الناقصة التي سببت مشكلة الـ Compile
-// ══════════════════════════════════════════════════════════════
 import com.my.televip.virtuals.SQLite.SQLiteCursor;
 import com.my.televip.virtuals.SQLite.SQLiteDatabase;
 import com.my.televip.virtuals.SQLite.SQLitePreparedStatement;
 
 /**
- * DontWipeMessages — مصلح بالكامل وجاهز للـ Build بدون أخطاء
+ * DontWipeMessages — مصلح بالكامل وجاهز للـ Build بدون أخطاء استيراد
  */
 public class DontWipeMessages {
 
@@ -227,96 +230,3 @@ public class DontWipeMessages {
                                 protected void beforeMethod(MethodHookParam param) {
                                     isMyOwnDelete = true;
                                 }
-                            }
-                    ));
-
-            HMethod.hookMethod(
-                    ClassLoad.getClass(ClassNames.NOTIFICATION_CENTER),
-                    AutomationResolver.resolve("NotificationCenter", "postNotificationName", AutomationResolver.ResolverType.Method),
-                    AutomationResolver.merge(
-                            AutomationResolver.resolveObject("postNotificationName", new Class[]{int.class, Object[].class}),
-                            new AbstractMethodHook() {
-                                @Override
-                                protected void beforeMethod(MethodHookParam param) {
-                                    if (isEnabled() && !isMyOwnDelete) {
-                                        int id = (int) param.args[0];
-                                        if (id == NotificationCenter.getMessagesDeleted())
-                                            param.setResult(null);
-                                    }
-                                }
-                                @Override
-                                protected void afterMethod(MethodHookParam param) {
-                                    isMyOwnDelete = false;
-                                }
-                            }
-                    ));
-        } catch (Throwable e) {
-            Logger.e(e);
-        }
-    }
-
-    private static void hookUIBackground() {
-        try {
-            if (ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL) == null) return;
-
-            HMethod.hookMethod(
-                    ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL), "onDraw", Canvas.class,
-                    new AbstractMethodHook() {
-                        @Override
-                        protected void beforeMethod(MethodHookParam param) {
-                            try {
-                                if (!isEnabled()) return;
-
-                                Method getMessageObject = param.thisObject.getClass().getMethod("getMessageObject");
-                                Object msgObj = getMessageObject.invoke(param.thisObject);
-                                if (msgObj == null) return;
-
-                                TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
-                                if (owner == null) return;
-
-                                if ((owner.getFlags() & FLAG_DELETED) != 0) {
-                                    Canvas canvas = (Canvas) param.args[0];
-                                    if (canvas != null && param.thisObject instanceof View) {
-                                        // صبغة حمراء خفيفة وشفافة ممتازة للتمييز البصري
-                                        canvas.drawColor(Color.argb(35, 255, 80, 80)); 
-                                    }
-                                }
-                            } catch (Throwable ignored) {
-                            }
-                        }
-                    });
-        } catch (Throwable e) {
-            Logger.e(e);
-        }
-    }
-
-    private static void hookAutoDownload() {
-        try {
-            if (ClassLoad.getClass(ClassNames.DOWNLOAD_CONTROLLER) == null) return;
-
-            HMethod.hookMethod(
-                    ClassLoad.getClass(ClassNames.DOWNLOAD_CONTROLLER),
-                    AutomationResolver.resolve("DownloadController", "canDownloadMedia", AutomationResolver.ResolverType.Method),
-                    ClassLoad.getClass(ClassNames.TL_MESSAGE),
-                    new AbstractMethodHook() {
-                        @Override
-                        protected void beforeMethod(MethodHookParam param) {
-                            try {
-                                TLRPC.Message msg = new TLRPC.Message(param.args[0]);
-                                if ((msg.getFlags() & FLAG_DELETED) != 0)
-                                    param.setResult(0);
-                            } catch (Throwable e) {
-                                Logger.e(e);
-                            }
-                        }
-                    });
-        } catch (Throwable e) {
-            Logger.e(e);
-        }
-    }
-
-    private static boolean isEnabled() {
-        return ConfigManager.dontWipeMessages != null && ConfigManager.dontWipeMessages.isEnable();
-    }
-}
-
