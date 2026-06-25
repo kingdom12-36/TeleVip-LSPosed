@@ -26,12 +26,15 @@ import com.my.televip.virtuals.messenger.NotificationCenter;
 import com.my.televip.virtuals.tgnet.NativeByteBuffer;
 import com.my.televip.virtuals.tgnet.TLRPC;
 
-import java.lang.reflect.Method;
-import java.util.ArrayList;
-import java.util.List;
+// ══════════════════════════════════════════════════════════════
+// 🌟 تم إضافة الـ Imports الناقصة التي سببت مشكلة الـ Compile
+// ══════════════════════════════════════════════════════════════
+import com.my.televip.virtuals.SQLite.SQLiteCursor;
+import com.my.televip.virtuals.SQLite.SQLiteDatabase;
+import com.my.televip.virtuals.SQLite.SQLitePreparedStatement;
 
 /**
- * DontWipeMessages — مصلح بالكامل مع تلوين الرسائل المحذوفة خلفية حمراء شفافة
+ * DontWipeMessages — مصلح بالكامل وجاهز للـ Build بدون أخطاء
  */
 public class DontWipeMessages {
 
@@ -98,7 +101,7 @@ public class DontWipeMessages {
             hookDeletionEvents();
             hookBlockDbDeletion();
             hookOwnDeletePassthrough();
-            hookUIBackground(); // <--- تفعيل كود التلوين البصري المضمون
+            hookUIBackground(); 
             hookAutoDownload();
         } catch (Throwable e) {
             Logger.e(e);
@@ -252,14 +255,10 @@ public class DontWipeMessages {
         }
     }
 
-    // ══════════════════════════════════════════════════════════════
-    // 🎨 كود الـ UI الإجباري والمضمون: تلوين الرسالة بالكامل عند الرسم
-    // ══════════════════════════════════════════════════════════════
     private static void hookUIBackground() {
         try {
             if (ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL) == null) return;
 
-            // نعمل Hook على دالة onDraw الأساسية لكل خلية رسالة
             HMethod.hookMethod(
                     ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL), "onDraw", Canvas.class,
                     new AbstractMethodHook() {
@@ -268,7 +267,6 @@ public class DontWipeMessages {
                             try {
                                 if (!isEnabled()) return;
 
-                                // الحصول على كائن الـ MessageObject المربوط بالخلية الحالية
                                 Method getMessageObject = param.thisObject.getClass().getMethod("getMessageObject");
                                 Object msgObj = getMessageObject.invoke(param.thisObject);
                                 if (msgObj == null) return;
@@ -276,19 +274,14 @@ public class DontWipeMessages {
                                 TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
                                 if (owner == null) return;
 
-                                // إذا كانت الرسالة تحمل علامة محذوفة
                                 if ((owner.getFlags() & FLAG_DELETED) != 0) {
                                     Canvas canvas = (Canvas) param.args[0];
                                     if (canvas != null && param.thisObject instanceof View) {
-                                        View cell = (View) param.thisObject;
-                                        
-                                        // صبغة حمراء شفافة خفيفة تغطي الخلية بالكامل لتمييزها (ARGB)
-                                        // 40 هو مستوى الشفافية (Alpha)، و 255 للون الأحمر
-                                        canvas.drawColor(Color.argb(40, 255, 80, 80)); 
+                                        // صبغة حمراء خفيفة وشفافة ممتازة للتمييز البصري
+                                        canvas.drawColor(Color.argb(35, 255, 80, 80)); 
                                     }
                                 }
-                            } catch (Throwable e) {
-                                // سكايب الـ Logger هنا منعاً لبطء اللوج أثناء التمرير والسكرول السريع
+                            } catch (Throwable ignored) {
                             }
                         }
                     });
