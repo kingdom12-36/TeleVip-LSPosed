@@ -1,12 +1,17 @@
 package com.my.televip.features;
 
 import android.graphics.Color;
+import android.os.Handler;
+import android.os.HandlerThread;
+import android.os.Looper;
+import android.os.Process;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.TextPaint;
+import android.text.TextUtils; // <--- هذا الاستيراد الذي كان ناقصاً وتسبب في الخطأ الأول
 import android.text.style.ForegroundColorSpan;
 import android.util.SparseArray;
-import android.view.View;
+import android.view.View; // <--- استيراد الـ View لعمل الـ Invalidate
 
 import com.my.televip.Class.ClassLoad;
 import com.my.televip.Class.ClassNames;
@@ -34,25 +39,77 @@ import com.my.televip.virtuals.tgnet.TLRPC;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 import de.robv.android.xposed.XposedHelpers;
 
 /**
- * DontWipeMessages — إصدار شامل ومصلح في ملف واحد
- * تم حل مشكلة ظهور علامة الحذف ✕ عبر إجبار الـ View على إعادة الرسم
+ * DontWipeMessages — مصلح بالكامل في ملف واحد ومتوافق مع الـ ConfigManager
  */
 public class DontWipeMessages {
 
     public static final int FLAG_DELETED = 1 << 31;
     private static boolean isMyOwnDelete = false;
-    private static boolean isHooked = false;
 
-    public static void initProcessing() {
+    private static final Handler dbHandler = new Handler(makeDbLooper());
+
+    private static Looper makeDbLooper() {
+        HandlerThread t = new HandlerThread("TeleVip-DontWipe", Process.THREAD_PRIORITY_DISPLAY);
+        t.start();
+        return t.getLooper();
+    }
+
+    private static void persistDeletedFlag(MessagesStorage messagesStorage, long dialogId, ArrayList<Integer> delMsg) {
         try {
-            if (isHooked) return;
-            isHooked = true;
+            dbHandler.post(() -> {
+                try {
+                    SQLiteDatabase db = messagesStorage.getDatabase();
+                    for (int t = 0; t < 2; t++) {
+                        String table  = (t == 0) ? "messages_v2" : "messages_topics";
+                        String query  = "SELECT data,mid,uid FROM " + table
+                                + " WHERE " + (dialogId == 0 ? "is_channel" : "uid")
+                                + " = " + dialogId
+                                + " AND mid IN (" + TextUtils.join(",", delMsg) + ");";
+                        String update = "UPDATE " + table + " SET data = ? WHERE uid = ? AND mid = ?";
 
+                        SQLiteCursor cursor = db.queryFinalized(query, new Object[]{});
+                        SQLitePreparedStatement state = db.executeFast(update);
+
+                        while (cursor.next()) {
+                            NativeByteBuffer data = cursor.byteBufferValue(0);
+                            int  mid = cursor.intValue(1);
+                            long uid = cursor.longValue(2);
+
+                            data.position(4);
+                            int flags = (int) data.readInt32(true);
+                            flags |= FLAG_DELETED;
+                            data.position(4);
+                            data.writeInt32(flags);
+                            data.position(0);
+
+                            state.requery();
+                            state.bindByteBuffer(1, data);
+                            state.bindLong(2, uid);
+                            state.bindInteger(3, mid);
+                            state.step();
+                            data.reuse();
+                        }
+                        cursor.dispose();
+                        state.dispose();
+                    }
+                } catch (Throwable e) {
+                    Logger.e(e);
+                }
+            });
+        } catch (Throwable e) {
+            Logger.e(e);
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // تم إرجاع اسم الدالة إلى init() ليتوافق مع الـ ConfigManager تماماً
+    // ══════════════════════════════════════════════════════════════
+    public static void init() {
+        try {
             hookDeletionEvents();
             hookBlockDbDeletion();
             hookOwnDeletePassthrough();
@@ -69,21 +126,23 @@ public class DontWipeMessages {
 
             Method[] methods = ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER).getDeclaredMethods();
             List<String> found = new ArrayList<>();
-            for (Method m : methods) {
+            for (Method m : methods)
                 if (m.getParameterCount() == 5
                         && m.getParameterTypes()[0] == ArrayList.class
                         && m.getParameterTypes()[1] == ArrayList.class
                         && m.getParameterTypes()[2] == ArrayList.class
                         && m.getParameterTypes()[3] == boolean.class
-                        && m.getParameterTypes()[4] == int.class) {
+                        && m.getParameterTypes()[4] == int.class)
                     found.add(m.getName());
-                }
+
+            if (found.size() != 1) {
+                Logger.w("DontWipeMessages: processUpdateArray candidates=" + found.size());
+                return;
             }
 
-            if (found.size() != 1) return;
-
             HMethod.hookMethod(
-                    ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER), found.get(0),
+                    ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER),
+                    found.get(0),
                     ArrayList.class, ArrayList.class, ArrayList.class, boolean.class, int.class,
                     new AbstractMethodHook() {
                         @Override
@@ -92,37 +151,36 @@ public class DontWipeMessages {
                                 if (!isEnabled()) return;
 
                                 MessagesController mc = new MessagesController(param.thisObject);
-                                CopyOnWriteArrayList<Object> updates = new CopyOnWriteArrayList<>(Utils.castList(param.args[0], Object.class));
-                                if (updates.isEmpty()) return;
+                                List<Object> updates = Utils.castList(param.args[0], Object.class);
+                                if (updates == null || updates.isEmpty()) return;
 
                                 ArrayList<Object> keep = new ArrayList<>();
 
                                 for (Object item : updates) {
-                                    boolean isChannel = item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_CHANNEL_MESSAGES));
-                                    boolean isDirect  = item.getClass().equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_MESSAGES));
-
-                                    if (!isChannel && !isDirect) {
-                                        keep.add(item);
-                                    }
+                                    boolean isChannel = item.getClass().equals(
+                                            ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_CHANNEL_MESSAGES));
+                                    boolean isDirect  = item.getClass().equals(
+                                            ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_MESSAGES));
 
                                     if (isChannel) {
-                                        TLRPC.TL_updateDeleteChannelMessages upd = new TLRPC.TL_updateDeleteChannelMessages(item);
+                                        TLRPC.TL_updateDeleteChannelMessages upd =
+                                                new TLRPC.TL_updateDeleteChannelMessages(item);
                                         long dialogId = -upd.getChannelID();
 
                                         LongSparseArray dialogMsg = mc.getDialogMessage();
                                         ArrayList<Object> live = dialogMsg.get(dialogId);
-                                        if (live != null) {
+                                        if (live != null)
                                             for (Object o : live) {
                                                 TLRPC.Message owner = new MessageObject(o).getMessageOwner();
-                                                if (upd.getMessages().contains(owner.getID())) {
+                                                if (upd.getMessages().contains(owner.getID()))
                                                     owner.setFlags(owner.getFlags() | FLAG_DELETED);
-                                                }
                                             }
-                                        }
-                                        persistDeletedFlagSafe(mc.getMessagesStorage(), dialogId, upd.getMessages());
+
+                                        persistDeletedFlag(mc.getMessagesStorage(), dialogId, upd.getMessages());
 
                                     } else if (isDirect) {
-                                        TLRPC.TL_updateDeleteMessages upd = new TLRPC.TL_updateDeleteMessages(item);
+                                        TLRPC.TL_updateDeleteMessages upd =
+                                                new TLRPC.TL_updateDeleteMessages(item);
 
                                         SparseArray<Object> byId = mc.getDialogMessagesByIds();
                                         for (int id : upd.getMessages()) {
@@ -132,9 +190,14 @@ public class DontWipeMessages {
                                                 owner.setFlags(owner.getFlags() | FLAG_DELETED);
                                             }
                                         }
-                                        persistDeletedFlagSafe(mc.getMessagesStorage(), 0, upd.getMessages());
+
+                                        persistDeletedFlag(mc.getMessagesStorage(), 0, upd.getMessages());
+
+                                    } else {
+                                        keep.add(item);
                                     }
                                 }
+
                                 param.args[0] = keep;
 
                             } catch (Throwable e) {
@@ -147,70 +210,23 @@ public class DontWipeMessages {
         }
     }
 
-    private static void persistDeletedFlagSafe(MessagesStorage messagesStorage, long dialogId, ArrayList<Integer> delMsg) {
-        try {
-            messagesStorage.getStorageQueue().postRunnable(() -> {
-                try {
-                    SQLiteDatabase db = messagesStorage.getDatabase();
-                    String[] tables = {"messages_v2", "messages_topics"};
-                    for (String table : tables) {
-                        String query = "SELECT data, mid, uid FROM " + table + " WHERE mid IN (" + TextUtils.join(",", delMsg) + ")";
-                        if (dialogId != 0) {
-                            query += " AND uid = " + dialogId;
-                        }
-
-                        SQLiteCursor cursor = db.queryFinalized(query, new Object[]{});
-                        String update = "UPDATE " + table + " SET data = ? WHERE uid = ? AND mid = ?";
-                        SQLitePreparedStatement state = db.executeFast(update);
-
-                        while (cursor.next()) {
-                            NativeByteBuffer data = cursor.byteBufferValue(0);
-                            if (data != null) {
-                                int mid = cursor.intValue(1);
-                                long uid = cursor.longValue(2);
-
-                                data.position(4);
-                                int flags = data.readInt32(true);
-                                flags |= FLAG_DELETED;
-                                data.position(4);
-                                data.writeInt32(flags);
-                                data.position(0);
-
-                                state.requery();
-                                state.bindByteBuffer(1, data);
-                                state.bindLong(2, uid);
-                                state.bindInteger(3, mid);
-                                state.step();
-                                data.reuse();
-                            }
-                        }
-                        cursor.dispose();
-                        state.dispose();
-                    }
-                } catch (Throwable e) {
-                    Logger.e(e);
-                }
-            });
-        } catch (Throwable e) {
-            Logger.e(e);
-        }
-    }
-
     private static void hookBlockDbDeletion() {
         try {
             if (ClassLoad.getClass(ClassNames.MESSAGES_STORAGE) == null) return;
 
             HMethod.hookMethod(
                     ClassLoad.getClass(ClassNames.MESSAGES_STORAGE),
-                    AutomationResolver.resolve("MessagesStorage", "markMessagesAsDeleted", AutomationResolver.ResolverType.Method),
+                    AutomationResolver.resolve("MessagesStorage", "markMessagesAsDeleted",
+                            AutomationResolver.ResolverType.Method),
                     AutomationResolver.merge(
-                            AutomationResolver.resolveObject("markMessagesAsDeleted", new Class[]{long.class, ArrayList.class, boolean.class, boolean.class, int.class, int.class}),
+                            AutomationResolver.resolveObject("markMessagesAsDeleted",
+                                    new Class[]{long.class, ArrayList.class, boolean.class,
+                                            boolean.class, int.class, int.class}),
                             new AbstractMethodHook() {
                                 @Override
                                 protected void beforeMethod(MethodHookParam param) {
-                                    if (isEnabled() && !isMyOwnDelete) {
+                                    if (isEnabled() && !isMyOwnDelete)
                                         param.setResult(null);
-                                    }
                                 }
                             }
                     ));
@@ -225,12 +241,15 @@ public class DontWipeMessages {
 
             HMethod.hookMethod(
                     ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER),
-                    AutomationResolver.resolve("MessagesController", "deleteMessages", AutomationResolver.ResolverType.Method),
+                    AutomationResolver.resolve("MessagesController", "deleteMessages",
+                            AutomationResolver.ResolverType.Method),
                     AutomationResolver.merge(
                             AutomationResolver.resolveObject("deleteMessages", new Class[]{
-                                    ArrayList.class, ArrayList.class, ClassLoad.getClass(ClassNames.TLRPC_ENCRYPTED_CHAT),
-                                    long.class, boolean.class, int.class, boolean.class, long.class,
-                                    ClassLoad.getClass(ClassNames.TL_OBJECT), int.class, boolean.class, int.class}),
+                                    ArrayList.class, ArrayList.class,
+                                    ClassLoad.getClass(ClassNames.TLRPC_ENCRYPTED_CHAT),
+                                    long.class, boolean.class, int.class, boolean.class,
+                                    long.class, ClassLoad.getClass(ClassNames.TL_OBJECT),
+                                    int.class, boolean.class, int.class}),
                             new AbstractMethodHook() {
                                 @Override
                                 protected void beforeMethod(MethodHookParam param) {
@@ -241,17 +260,18 @@ public class DontWipeMessages {
 
             HMethod.hookMethod(
                     ClassLoad.getClass(ClassNames.NOTIFICATION_CENTER),
-                    AutomationResolver.resolve("NotificationCenter", "postNotificationName", AutomationResolver.ResolverType.Method),
+                    AutomationResolver.resolve("NotificationCenter", "postNotificationName",
+                            AutomationResolver.ResolverType.Method),
                     AutomationResolver.merge(
-                            AutomationResolver.resolveObject("postNotificationName", new Class[]{int.class, Object[].class}),
+                            AutomationResolver.resolveObject("postNotificationName",
+                                    new Class[]{int.class, Object[].class}),
                             new AbstractMethodHook() {
                                 @Override
                                 protected void beforeMethod(MethodHookParam param) {
                                     if (isEnabled() && !isMyOwnDelete) {
                                         int id = (int) param.args[0];
-                                        if (id == NotificationCenter.getMessagesDeleted()) {
+                                        if (id == NotificationCenter.getMessagesDeleted())
                                             param.setResult(null);
-                                        }
                                     }
                                 }
                                 @Override
@@ -261,9 +281,11 @@ public class DontWipeMessages {
                             }
                     ));
 
-            if (ClassLoad.getClass(ClassNames.NOTIFICATIONS_CONTROLLER) != null) {
-                for (Method m : ClassLoad.getClass(ClassNames.NOTIFICATIONS_CONTROLLER).getDeclaredMethods()) {
-                    if (m.getName().equals(AutomationResolver.resolve("NotificationsController", "removeDeletedMessagesFromNotifications", AutomationResolver.ResolverType.Method))) {
+            if (ClassLoad.getClass(ClassNames.NOTIFICATIONS_CONTROLLER) != null)
+                for (Method m : ClassLoad.getClass(ClassNames.NOTIFICATIONS_CONTROLLER).getDeclaredMethods())
+                    if (m.getName().equals(AutomationResolver.resolve("NotificationsController",
+                            "removeDeletedMessagesFromNotifications",
+                            AutomationResolver.ResolverType.Method))) {
                         HMethod.hookMethod(m, new AbstractMethodHook() {
                             @Override
                             protected void beforeMethod(MethodHookParam param) {
@@ -272,25 +294,23 @@ public class DontWipeMessages {
                         });
                         break;
                     }
-                }
-            }
+
         } catch (Throwable e) {
             Logger.e(e);
         }
     }
 
-    // ══════════════════════════════════════════════════════════════
-    //  تعديل الـ UI: تم إضافة كود فرض تحديث الخلية لإظهار العلامة فوراً
-    // ══════════════════════════════════════════════════════════════
     private static void hookUI() {
         try {
             if (ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL) == null) return;
 
             HMethod.hookMethod(
                     ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL),
-                    AutomationResolver.resolve("ChatMessageCell", "measureTime", AutomationResolver.ResolverType.Method),
+                    AutomationResolver.resolve("ChatMessageCell", "measureTime",
+                            AutomationResolver.ResolverType.Method),
                     AutomationResolver.merge(
-                            AutomationResolver.resolveObject("measureTime", new Class[]{ClassLoad.getClass(ClassNames.MESSAGE_OBJECT)}),
+                            AutomationResolver.resolveObject("measureTime",
+                                    new Class[]{ClassLoad.getClass(ClassNames.MESSAGE_OBJECT)}),
                             new AbstractMethodHook() {
                                 @Override
                                 protected void afterMethod(MethodHookParam param) {
@@ -301,16 +321,21 @@ public class DontWipeMessages {
                                         if (msgArg == null) return;
 
                                         TLRPC.Message owner = new MessageObject(msgArg).getMessageOwner();
-                                        if (owner == null || (owner.getFlags() & FLAG_DELETED) == 0) return;
+                                        if (owner == null) return;
+                                        if ((owner.getFlags() & FLAG_DELETED) == 0) return;
 
-                                        // بناء علامة الحذف باللون الأحمر المريح للعين
-                                        String labelText = "✕ " + (Translator.get(Keys.DontWipeMessages) != null ? Translator.get(Keys.DontWipeMessages) : "Deleted");
+                                        String labelText = "✕ " + Translator.get(Keys.DontWipeMessages);
                                         SpannableStringBuilder label = new SpannableStringBuilder(labelText + " ");
-                                        label.setSpan(new ForegroundColorSpan(Color.rgb(239, 83, 80)), 0, labelText.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                                        label.setSpan(
+                                                new ForegroundColorSpan(Color.rgb(220, 50, 50)),
+                                                0, labelText.length(),
+                                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
 
-                                        String resolvedField = AutomationResolver.resolve("ChatMessageCell", "currentTimeString", AutomationResolver.ResolverType.Field);
+                                        String resolvedField = AutomationResolver.resolve(
+                                                "ChatMessageCell", "currentTimeString",
+                                                AutomationResolver.ResolverType.Field);
+
                                         Object rawTime = null;
-
                                         try {
                                             rawTime = XposedHelpers.getObjectField(param.thisObject, resolvedField);
                                         } catch (Throwable ignored) {
@@ -318,20 +343,22 @@ public class DontWipeMessages {
                                                 rawTime = XposedHelpers.getObjectField(param.thisObject, "currentTimeString");
                                                 resolvedField = "currentTimeString";
                                             } catch (Throwable e2) {
+                                                Logger.e(e2);
                                                 return;
                                             }
                                         }
 
                                         SpannableStringBuilder newTime;
                                         if (rawTime instanceof SpannableStringBuilder) {
-                                            newTime = new SpannableStringBuilder(label).append((SpannableStringBuilder) rawTime);
+                                            newTime = new SpannableStringBuilder(label)
+                                                    .append((SpannableStringBuilder) rawTime);
                                         } else {
-                                            newTime = new SpannableStringBuilder(label).append(rawTime != null ? rawTime.toString() : "");
+                                            newTime = new SpannableStringBuilder(label)
+                                                    .append(rawTime != null ? rawTime.toString() : "");
                                         }
 
                                         XposedHelpers.setObjectField(param.thisObject, resolvedField, newTime);
 
-                                        // زيادة الأبعاد البرمجية للوقت لمنع حدوث التواء أو قص للنص الجديد
                                         TextPaint paint = Theme.getTextPaint();
                                         if (paint != null) {
                                             ChatMessageCellDefault cell = new ChatMessageCellDefault(param.thisObject) {};
@@ -340,11 +367,11 @@ public class DontWipeMessages {
                                             cell.setTimeWidth(cell.getTimeWidth() + extra);
                                         }
 
-                                        // 🌟 التعديل السحري: إجبار واجهة تيليجرام على الرسم مجدداً لإظهار الـ ✕ فوراً
+                                        // 🌟 السطران السحريان لإجبار الواجهة على الرسم فوراً وظهور الـ X
                                         if (param.thisObject instanceof View) {
                                             View cellView = (View) param.thisObject;
-                                            cellView.invalidate(); // إعادة رسم
-                                            cellView.requestLayout(); // إعادة حساب الأبعاد
+                                            cellView.invalidate();
+                                            cellView.requestLayout();
                                         }
 
                                     } catch (Throwable e) {
@@ -364,16 +391,16 @@ public class DontWipeMessages {
 
             HMethod.hookMethod(
                     ClassLoad.getClass(ClassNames.DOWNLOAD_CONTROLLER),
-                    AutomationResolver.resolve("DownloadController", "canDownloadMedia", AutomationResolver.ResolverType.Method),
+                    AutomationResolver.resolve("DownloadController", "canDownloadMedia",
+                            AutomationResolver.ResolverType.Method),
                     ClassLoad.getClass(ClassNames.TL_MESSAGE),
                     new AbstractMethodHook() {
                         @Override
                         protected void beforeMethod(MethodHookParam param) {
                             try {
                                 TLRPC.Message msg = new TLRPC.Message(param.args[0]);
-                                if ((msg.getFlags() & FLAG_DELETED) != 0) {
+                                if ((msg.getFlags() & FLAG_DELETED) != 0)
                                     param.setResult(0);
-                                }
                             } catch (Throwable e) {
                                 Logger.e(e);
                             }
@@ -385,6 +412,7 @@ public class DontWipeMessages {
     }
 
     private static boolean isEnabled() {
-        return ConfigManager.dontWipeMessages != null && ConfigManager.dontWipeMessages.isEnable();
+        return ConfigManager.dontWipeMessages != null
+                && ConfigManager.dontWipeMessages.isEnable();
     }
 }
