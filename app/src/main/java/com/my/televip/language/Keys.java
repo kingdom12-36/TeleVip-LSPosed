@@ -118,4 +118,7 @@ public class Keys {
     public static final String UnlockTranslateButton   = "UnlockTranslateButton";
 
     public static final String ShowRealLastSeen        = "ShowRealLastSeen";
+
+    // Hide Edited Mark (AyuGram-inspired)
+    public static final String HideEditedMark          = "HideEditedMark";
 }
