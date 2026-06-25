@@ -109,5 +109,8 @@
   "SpoofDeviceInfo": "Spoof device info",
   "MessageSchedulerBypass": "Bypass message scheduler restrictions",
   "UnlockTranslateButton": "Unlock translate button",
-  "ShowRealLastSeen": "Show real last seen time"
+  "ShowRealLastSeen": "Show real last seen time",
+  "HideEditedMark": "Hide edited mark",
+  "DontWipeMessages": "Deleted",
+  "DontWipeMessagesTitle": "Don't wipe deleted messages"
 }

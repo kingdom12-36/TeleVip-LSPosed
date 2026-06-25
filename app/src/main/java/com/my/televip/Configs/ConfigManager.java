@@ -9,6 +9,7 @@ import com.my.televip.features.DisableChannelSwipeBack;
 import com.my.televip.features.DisableNumberRounding;
 import com.my.televip.features.DisableProfileSwipeBack;
 import com.my.televip.features.DisableStories;
+import com.my.televip.features.DontWipeMessages;
 import com.my.televip.features.DownloadSpeed;
 import com.my.televip.features.EnableSavingStories;
 import com.my.televip.features.FixTLError;
@@ -79,6 +80,7 @@ public class ConfigManager {
 
     // Messages
     public static ConfigItem messages;
+    public static ConfigItem dontWipeMessages;
     public static ConfigItem showMessageId;
     public static ConfigItem hideEditedMark;
     public static ConfigItem saveEditsHistory;
@@ -195,6 +197,8 @@ public class ConfigManager {
             messages = new ConfigItem(ConfigItem.HEADER, Keys.MessagesSettings);
             items.add(messages);
 
+            dontWipeMessages = new ConfigItem(ConfigItem.SWITCH, Keys.DontWipeMessagesTitle, ConfigPreferences.getBoolean(Keys.DontWipeMessagesTitle), DontWipeMessages::init);
+            items.add(dontWipeMessages);
 
             if (!ClientChecker.check(ClientChecker.ClientType.NagramX)) {
                 showMessageId = new ConfigItem(ConfigItem.SWITCH, Keys.ShowMessageID, ConfigPreferences.getBoolean(Keys.ShowMessageID), ChatMessageCell::init);
@@ -231,7 +235,6 @@ public class ConfigManager {
             noMessageLimit = new ConfigItem(ConfigItem.SWITCH, Keys.NoMessageLimit, ConfigPreferences.getBoolean(Keys.NoMessageLimit), NoMessageLimit::init);
             items.add(noMessageLimit);
 
-
             unlockGroupInput = new ConfigItem(ConfigItem.SWITCH, Keys.UnlockGroupInput, ConfigPreferences.getBoolean(Keys.UnlockGroupInput), UnlockGroupInput::init);
             items.add(unlockGroupInput);
 
@@ -252,8 +255,6 @@ public class ConfigManager {
 
             unlockTranslateButton = new ConfigItem(ConfigItem.SWITCH, Keys.UnlockTranslateButton, ConfigPreferences.getBoolean(Keys.UnlockTranslateButton), UnlockTranslateButton::init);
             items.add(unlockTranslateButton);
-
-
 
             items.add(shadows);
 

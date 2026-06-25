@@ -109,5 +109,8 @@
   "SpoofDeviceInfo": "تزوير معلومات الجهاز",
   "MessageSchedulerBypass": "تجاوز قيود جدولة الرسائل",
   "UnlockTranslateButton": "تفعيل زر الترجمة",
-  "ShowRealLastSeen": "عرض آخر ظهور الحقيقي"
+  "ShowRealLastSeen": "عرض آخر ظهور الحقيقي",
+  "HideEditedMark": "إخفاء علامة التعديل",
+  "DontWipeMessages": "محذوفة",
+  "DontWipeMessagesTitle": "إبقاء الرسائل المحذوفة"
 }
