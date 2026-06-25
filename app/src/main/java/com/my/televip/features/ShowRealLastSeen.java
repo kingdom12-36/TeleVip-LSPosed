@@ -1,5 +1,7 @@
 package com.my.televip.features;
 
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -20,6 +22,7 @@ import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import de.robv.android.xposed.XposedHelpers;
@@ -32,13 +35,74 @@ public class ShowRealLastSeen {
     private static final long REFRESH_INTERVAL_MS = 5 * 60 * 1000;
     private static long lastRefreshTime = 0;
 
+    // Persistent cache — survives app restarts
+    private static SharedPreferences prefs;
+    private static final String PREFS_NAME = "televip_ls_cache";
+    private static final String KEY_PREFIX = "ls_";
+    // Discard entries older than 30 days (they're no longer useful)
+    private static final int MAX_AGE_SECONDS = 30 * 24 * 3600;
+
     public static void init() {
         if (isEnable) return;
         isEnable = true;
+        initPrefs();
         hookFormatUserStatus();
         hookUserStatusUpdates();
         scheduleStatusRefresh();
     }
+
+    // ── Persistent cache ──────────────────────────────────────────────────────
+
+    private static void initPrefs() {
+        try {
+            Context ctx = (Context) XposedHelpers.getStaticObjectField(
+                ClassLoad.getClass(ClassNames.APPLICATION_LOADER), "applicationContext");
+            if (ctx == null) return;
+            prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            loadFromPrefs();
+        } catch (Throwable t) {
+            Logger.e(t);
+        }
+    }
+
+    private static void loadFromPrefs() {
+        if (prefs == null) return;
+        try {
+            int now = (int) (System.currentTimeMillis() / 1000);
+            Map<String, ?> all = prefs.getAll();
+            for (Map.Entry<String, ?> entry : all.entrySet()) {
+                if (!entry.getKey().startsWith(KEY_PREFIX)) continue;
+                try {
+                    long userId = Long.parseLong(entry.getKey().substring(KEY_PREFIX.length()));
+                    Object val = entry.getValue();
+                    if (!(val instanceof Integer)) continue;
+                    int ts = (Integer) val;
+                    // Skip stale entries — older than MAX_AGE_SECONDS
+                    if (ts > 0 && (now - ts) < MAX_AGE_SECONDS) {
+                        lastSeenCache.put(userId, ts);
+                    }
+                } catch (Throwable ignored) {}
+            }
+        } catch (Throwable t) {
+            Logger.e(t);
+        }
+    }
+
+    /**
+     * Puts a timestamp into both the in-memory cache and SharedPreferences.
+     * Always call this instead of lastSeenCache.put() directly.
+     */
+    private static void cacheAndPersist(long userId, int timestamp) {
+        if (userId <= 0 || timestamp <= 0) return;
+        lastSeenCache.put(userId, timestamp);
+        if (prefs != null) {
+            try {
+                prefs.edit().putInt(KEY_PREFIX + userId, timestamp).apply();
+            } catch (Throwable ignored) {}
+        }
+    }
+
+    // ── formatUserStatus hook ─────────────────────────────────────────────────
 
     private static void hookFormatUserStatus() {
         Class<?> localeControllerClass = ClassLoad.getClass(ClassNames.LOCALE_CONTROLLER);
@@ -63,25 +127,35 @@ public class ShowRealLastSeen {
 
                     String simpleName = status.getClass().getSimpleName();
 
-                    // Offline: cache the real time and immediately show it
+                    // ── Offline: real timestamp available ─────────────────────
                     if (simpleName.contains("Offline")) {
                         int wasOnline = getIntSafe(status, "was_online");
                         if (wasOnline > 0) {
-                            lastSeenCache.put(userId, wasOnline);
+                            cacheAndPersist(userId, wasOnline);
                             String real = formatTimestamp(wasOnline);
                             if (real != null) { param.setResult(real); return; }
+                        }
+                        // was_online = 0 (privacy hidden) — use cached time if available
+                        Integer cached = lastSeenCache.get(userId);
+                        if (cached != null && cached > 0) {
+                            String real = formatTimestamp(cached);
+                            if (real != null) { param.setResult(real); }
                         }
                         return;
                     }
 
-                    // Online: cache "now" but let original method show "online"
+                    // ── Online: note when we last saw them online ─────────────
                     if (simpleName.contains("Online")) {
-                        lastSeenCache.put(userId, (int) (System.currentTimeMillis() / 1000));
-                        return;
+                        cacheAndPersist(userId, (int) (System.currentTimeMillis() / 1000));
+                        return; // Let original method show "online"
                     }
 
-                    // Privacy bucket (Recently / LastWeek / LastMonth):
-                    // show cached real time if available, else trigger a refresh
+                    // ── Recently / LastWeek / LastMonth (privacy buckets) ─────
+                    // "Recently" may arrive when a user with "Nobody" privacy
+                    // just went offline — their Online→Recently transition IS
+                    // the offline event. We prefer the cached time (which we
+                    // set when they went Online), or fall back to the persisted
+                    // value, or lastly show an approximate time.
                     boolean isPrivacyBucket = simpleName.contains("Recently")
                             || simpleName.contains("LastWeek")
                             || simpleName.contains("LastMonth");
@@ -92,6 +166,8 @@ public class ShowRealLastSeen {
                         String realTime = formatTimestamp(cached);
                         if (realTime != null) { param.setResult(realTime); return; }
                     }
+
+                    // No cached time — trigger a background refresh to get real data
                     scheduleStatusRefresh();
 
                 } catch (Throwable t) {
@@ -128,11 +204,13 @@ public class ShowRealLastSeen {
         }
     }
 
+    // ── MessagesController hooks ──────────────────────────────────────────────
+
     private static void hookUserStatusUpdates() {
         Class<?> mcClass = ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER);
         if (mcClass == null) return;
 
-        // ── 1. putUsers (list) + putUser (single) — caches status from any user batch ──
+        // ── putUsers / putUser — batch of users received from server ──────────
         String putUsersMethod = AutomationResolver.resolve(
                 "MessagesController", "putUsers", AutomationResolver.ResolverType.Method);
         String putUserMethod = AutomationResolver.resolve(
@@ -165,8 +243,11 @@ public class ShowRealLastSeen {
             }
         }
 
-        // ── 2. processUpdateArray — catches TL_updateUserStatus in real time ──
-        // This fires whenever any contact goes online or offline, even non-mutual contacts
+        // ── processUpdateArray — real-time status updates ─────────────────────
+        // Fires when ANY user goes online/offline, even with privacy restrictions.
+        // KEY INSIGHT: when a user with "Nobody" privacy goes offline, Telegram
+        // sends updateUserStatus(userId, Recently) at the EXACT moment of going
+        // offline. Capturing that moment gives us the real "last seen" time.
         Class<?> updateUserStatusCls = XposedHelpers.findClassIfExists(
                 "org.telegram.tgnet.TLRPC$TL_updateUserStatus", Utils.classLoader);
         if (updateUserStatusCls == null) {
@@ -207,9 +288,14 @@ public class ShowRealLastSeen {
     }
 
     /**
-     * Caches a TL_updateUserStatus object — fires whenever anyone in Telegram
-     * goes online or offline, including contacts with privacy restrictions.
-     * The status.was_online field (Offline) is the exact timestamp.
+     * Processes a TL_updateUserStatus object that just arrived from the server.
+     *
+     * The critical improvement over the original:
+     * — When status is "Recently", it means the user JUST went offline (the server
+     *   sends this update at the moment they disconnect). We record the current
+     *   time as their last seen IF we have no better (more recent) cached time.
+     *   If we already cached them going Online moments ago, that time is kept —
+     *   it's more accurate than "now" (since we don't know exactly when they left).
      */
     private static void cacheUpdateUserStatus(Object updateObj) {
         try {
@@ -219,19 +305,45 @@ public class ShowRealLastSeen {
             if (status == null) return;
 
             String sn = status.getClass().getSimpleName();
+            int nowSec = (int) (System.currentTimeMillis() / 1000);
+
             if (sn.contains("Offline")) {
                 int wasOnline = getIntSafe(status, "was_online");
-                // was_online may be 0 for privacy-restricted users even in the update;
-                // fall back to "now - 1s" so we at least know they were online just before
-                int ts = wasOnline > 0 ? wasOnline
-                        : (int) (System.currentTimeMillis() / 1000) - 1;
-                lastSeenCache.put(userId, ts);
+                // If was_online is 0 (privacy-hidden), fall back to "now - 1s"
+                int ts = wasOnline > 0 ? wasOnline : nowSec - 1;
+                cacheAndPersist(userId, ts);
+
             } else if (sn.contains("Online")) {
-                lastSeenCache.put(userId, (int) (System.currentTimeMillis() / 1000));
+                // Record the moment they came online — this becomes "last seen"
+                // when they later switch to Recently
+                cacheAndPersist(userId, nowSec);
+
+            } else if (sn.contains("Recently")) {
+                // The user JUST went offline. "Recently" is the privacy-bucket
+                // Telegram uses instead of a real timestamp for "Nobody" privacy users.
+                // This update fires at the exact moment of disconnect, so "now"
+                // is an accurate last-seen time.
+                Integer existing = lastSeenCache.get(userId);
+                if (existing != null && existing > 0 && (nowSec - existing) < 600) {
+                    // We already have a recent cached time (e.g. from when they
+                    // went Online moments ago) — it's more precise, keep it.
+                } else {
+                    // No recent cached time — use now as the best approximation
+                    cacheAndPersist(userId, nowSec);
+                }
             }
         } catch (Throwable ignored) {}
     }
 
+    /**
+     * Caches status from a TLRPC.User object (received in putUsers / putUser batches).
+     *
+     * Improvement: also handles "Recently" status updates in batches — if a user
+     * batch arrives and someone is listed as "Recently", we record "now" as their
+     * last seen (the batch is usually fresh from the server, so they went offline
+     * recently). If we already have a cached time within the last 10 minutes,
+     * we keep the more precise cached value.
+     */
     private static void cacheUserStatus(Object userObj) {
         if (userObj == null) return;
         try {
@@ -245,14 +357,26 @@ public class ShowRealLastSeen {
             if (status == null) return;
 
             String simpleName = status.getClass().getSimpleName();
+            int nowSec = (int) (System.currentTimeMillis() / 1000);
+
             if (simpleName.contains("Offline")) {
                 int wasOnline = getIntSafe(status, "was_online");
-                if (wasOnline > 0) lastSeenCache.put(userId, wasOnline);
+                if (wasOnline > 0) cacheAndPersist(userId, wasOnline);
+
             } else if (simpleName.contains("Online")) {
-                lastSeenCache.put(userId, (int) (System.currentTimeMillis() / 1000));
+                cacheAndPersist(userId, nowSec);
+
+            } else if (simpleName.contains("Recently")) {
+                // Only record an approximate time if we don't have a better one
+                Integer existing = lastSeenCache.get(userId);
+                if (existing == null || existing <= 0 || (nowSec - existing) >= 600) {
+                    cacheAndPersist(userId, nowSec);
+                }
             }
         } catch (Throwable ignored) {}
     }
+
+    // ── contacts.getStatuses refresh ──────────────────────────────────────────
 
     private static void scheduleStatusRefresh() {
         long now = System.currentTimeMillis();
@@ -322,9 +446,9 @@ public class ShowRealLastSeen {
                     String simpleName = status.getClass().getSimpleName();
                     if (simpleName.contains("Offline")) {
                         int wasOnline = getIntSafe(status, "was_online");
-                        if (wasOnline > 0) lastSeenCache.put(userId, wasOnline);
+                        if (wasOnline > 0) cacheAndPersist(userId, wasOnline);
                     } else if (simpleName.contains("Online")) {
-                        lastSeenCache.put(userId, (int) (System.currentTimeMillis() / 1000));
+                        cacheAndPersist(userId, (int) (System.currentTimeMillis() / 1000));
                     }
                 } catch (Throwable ignored) {}
             }
@@ -332,6 +456,8 @@ public class ShowRealLastSeen {
             Logger.e(t);
         }
     }
+
+    // ── formatting ────────────────────────────────────────────────────────────
 
     private static String formatTimestamp(int unixSeconds) {
         try {
@@ -359,6 +485,8 @@ public class ShowRealLastSeen {
             return null;
         }
     }
+
+    // ── helpers ───────────────────────────────────────────────────────────────
 
     private static Object findUserArg(Object[] args) {
         if (args == null) return null;
