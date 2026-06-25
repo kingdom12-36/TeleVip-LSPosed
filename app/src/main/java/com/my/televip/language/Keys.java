@@ -115,6 +115,6 @@ public class Keys {
     public static final String HideEditedMark         = "HideEditedMark";
 
     /** Key for DontWipeMessages feature — label shown beside deleted message timestamp */
-    public static final String DontWipeMessages = "DontWipeMessages";
+    
 
 }
