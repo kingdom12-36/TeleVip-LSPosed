@@ -13,11 +13,8 @@ import com.my.televip.Class.ClassNames;
 import com.my.televip.Configs.ConfigManager;
 import com.my.televip.base.AbstractMethodHook;
 import com.my.televip.hooks.HMethod;
-import com.my.televip.language.Keys;
-import com.my.televip.language.Translator;
 import com.my.televip.logging.Logger;
 import com.my.televip.obfuscate.AutomationResolver;
-import com.my.televip.utils.Utils;
 import com.my.televip.virtuals.OfficialChatMessageCell;
 import com.my.televip.virtuals.Theme;
 import com.my.televip.virtuals.messenger.MessageObject;
@@ -31,7 +28,6 @@ import de.robv.android.xposed.XposedHelpers;
 public class ChatMessageCell {
 
     public static boolean isEnable = false;
-
 
     public static void init() {
         try {
@@ -74,6 +70,71 @@ public class ChatMessageCell {
                         }
                     }
                 }
+            }
+        } catch (Throwable t) { Logger.e(t); }
+    }
+
+    /**
+     * Applies the time-area label — called from measureTime hook.
+     */
+    private static void applyTimeLabel(Object msgObjRaw, Object thisObject) {
+        boolean showMessageId = ConfigManager.showMessageId != null && ConfigManager.showMessageId.isEnable();
+        if (!showMessageId) return;
+        try {
+            MessageObject messageObject = new MessageObject(msgObjRaw);
+            if (messageObject.getMessageObject() == null) return;
+            TLRPC.Message owner = messageObject.getMessageOwner();
+            if (owner == null) return;
+
+            if (owner.getID() != 0)
+                appendTextTimeLabel("ID " + owner.getID(), thisObject, false);
+
+        } catch (Throwable t) { Logger.e(t); }
+    }
+
+    /**
+     * Appends a plain text label in the timestamp corner (used for message ID display).
+     */
+    private static void appendTextTimeLabel(String text, Object thisObject, boolean red) {
+        try {
+            OfficialChatMessageCell cell = new OfficialChatMessageCell(thisObject);
+            CharSequence raw = cell.getCurrentTimeString();
+            SpannableStringBuilder time = (raw != null)
+                ? (raw instanceof SpannableStringBuilder
+                    ? (SpannableStringBuilder) raw
+                    : new SpannableStringBuilder(raw))
+                : new SpannableStringBuilder();
+
+            SpannableStringBuilder label = new SpannableStringBuilder(text);
+            if (red) {
+                label.setSpan(new ForegroundColorSpan(Color.rgb(255, 69, 69)),
+                    0, label.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            }
+            label.append("  ");
+            time.insert(0, label);
+            cell.setCurrentTimeString(time);
+
+            TextPaint paint = Theme.getTextPaint();
+            if (paint == null) {
+                paint = new TextPaint();
+                DisplayMetrics dm = android.content.res.Resources.getSystem().getDisplayMetrics();
+                paint.setTextSize(12f * dm.scaledDensity);
+            }
+            int w = (int) Math.ceil(paint.measureText(label, 0, label.length()));
+            cell.setTimeTextWidth(w + cell.getTimeTextWidth());
+            cell.setTimeWidth(w + cell.getTimeWidth());
+        } catch (Throwable t) { Logger.e(t); }
+    }
+
+    private static int dp(float val) {
+        return (int) TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP, val,
+            android.content.res.Resources.getSystem().getDisplayMetrics());
+    }
+
+    public static SpannableStringBuilder convertToStringBuilder(CharSequence seq) {
+        if (seq == null) return null;
+        return seq instanceof SpannableStringBuilder ? (SpannableStringBuilder) seq : new SpannableStringBuilder(seq);
     }
 
     // ── Instance wrapper ──────────────────────────────────────────────────────
