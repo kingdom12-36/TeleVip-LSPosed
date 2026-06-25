@@ -42,6 +42,11 @@ A module for modifying Telegram with the following features:
 
 20. Hide Proxy Sponsor
 
+21. last seen real time
+22. Ai
+23. experimental features
+24. search by id
+25. spoof device ver
 There are additional features that are not listed here.
 
 # Support clients
