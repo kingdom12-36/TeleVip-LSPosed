@@ -12,6 +12,7 @@ public class Keys {
     public static final String HideSeen = "HideSeen";
     public static final String HideStoryView = "HideStoryView";
     public static final String HideTyping = "HideTyping";
+    public static final String DontWipeMessages = "DontWipeMessages";
     public static final String TelegramPremium = "TelegramPremium";
     public static final String RemovesContentSaving = "RemovesContentSaving";
     public static final String EnableSavingStories = "EnableSavingStories";
