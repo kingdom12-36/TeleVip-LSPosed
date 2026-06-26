@@ -393,7 +393,7 @@ public class DontWipeMessages {
             Method target = null;
             try {
                 target = cellClass.getDeclaredMethod(resolvedName, msgClass);
-                Logger.d("DontWipeMessages: measureTime found as '" + resolvedName + "'");
+                Logger.w("DontWipeMessages: measureTime found as '" + resolvedName + "'");
             } catch (NoSuchMethodException ignored) {
                 // Layer 2: scan all void methods taking a single MessageObject param
                 Logger.w("DontWipeMessages: measureTime not found as '" + resolvedName + "' — scanning by signature");
@@ -402,7 +402,7 @@ public class DontWipeMessages {
                             && m.getParameterCount() == 1
                             && m.getParameterTypes()[0] == msgClass) {
                         target = m;
-                        Logger.d("DontWipeMessages: found measureTime candidate: " + m.getName());
+                        Logger.w("DontWipeMessages: found measureTime candidate: " + m.getName());
                         break;
                     }
                 }
@@ -413,7 +413,7 @@ public class DontWipeMessages {
                                 && m.getParameterCount() == 1
                                 && m.getParameterTypes()[0] == msgClass) {
                             target = m;
-                            Logger.d("DontWipeMessages: found measureTime in superclass: " + m.getName());
+                            Logger.w("DontWipeMessages: found measureTime in superclass: " + m.getName());
                             break;
                         }
                     }
