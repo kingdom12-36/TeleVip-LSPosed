@@ -45,57 +45,87 @@ import java.util.concurrent.ConcurrentHashMap;
 import de.robv.android.xposed.XposedHelpers;
 
 /**
- * DontWipeMessages — single-file feature (all logic here, nothing else needed)
+ * DontWipeMessages — keeps messages deleted by others visible.
  *
- * Works on both Official Telegram AND NagramX/Nekogram.
- * NagramX obfuscation is handled via two layers:
- *   1. NagramX.java static mappings (class/method/field names)
- *   2. Dynamic reflection fallback in hookUI() — finds measureTime by signature
+ * Supports Official Telegram AND NagramX/Nekogram.
  *
- * ┌─ Hook 1: hookDeletionEvents()        intercepts delete updates from server
- * ├─ Hook 2: hookBlockDbDeletion()       blocks SQLite deletion
- * ├─ Hook 3: hookOwnDeletePassthrough()  lets user delete their own messages normally
- * ├─ Hook 4: hookUI()                    shows ✕ label next to timestamp
- * └─ Hook 5: hookAutoDownload()          stops auto-download of deleted media
+ * NagramX obfuscates field names:  flags→"k",  id→"a"
+ * We NEVER read those fields through the virtual class wrappers (getFlags/getID
+ * hard-code "flags"/"id").  Instead we always go through:
+ *   rawFlags(obj)   uses AutomationResolver → "k" on NagramX, "flags" elsewhere
+ *   rawId(obj)      uses AutomationResolver → "a" on NagramX, "id" elsewhere
+ *
+ * Visual mark strategy (two layers):
+ *   Layer A – text prefix  "✕ " prepended to message text in Hook 1.
+ *             Works everywhere; visible in the message body.
+ *   Layer B – timestamp mark via ChatMessageCell.measureTime hook.
+ *             Works on Official Telegram; on NagramX only if obfuscated names
+ *             match Re-Telegram's Nekogram.java mappings (X50 / h7).
  */
 public class DontWipeMessages {
 
-    // ══════════════════════════════════════════════════════════════
-    //  CONSTANTS
-    // ══════════════════════════════════════════════════════════════
-
-    /** Written into TLRPC.Message.flags to mark a message as deleted-by-other */
+    // ── constants ────────────────────────────────────────────────────────────
     public static final int FLAG_DELETED = 1 << 31;
 
-    /** Set when THE LOCAL USER is deleting — lets hooks 2 & 3 pass through */
+    /** True only while the LOCAL user is actively deleting something. */
     private static boolean isMyOwnDelete = false;
 
     /**
-     * In-memory set of deleted message IDs for the current session.
-     * Needed because in NagramX the flags field may be obfuscated and
-     * reading getFlags() might not return FLAG_DELETED reliably.
-     * This set is authoritative for messages deleted during this session.
+     * In-memory set of message IDs deleted in this session.
+     * Used as an authoritative fallback when flag-bit reads fail.
      */
     private static final Set<Integer> deletedIds =
             Collections.newSetFromMap(new ConcurrentHashMap<>());
 
-    // ══════════════════════════════════════════════════════════════
-    //  INLINE DB HANDLER  (no external dependency)
-    // ══════════════════════════════════════════════════════════════
-
+    // ── background DB thread ─────────────────────────────────────────────────
     private static final Handler dbHandler = new Handler(makeDbLooper());
-
     private static Looper makeDbLooper() {
         HandlerThread t = new HandlerThread("TeleVip-DontWipe", Process.THREAD_PRIORITY_DISPLAY);
         t.start();
         return t.getLooper();
     }
 
+    // ── obfuscation-aware field helpers ──────────────────────────────────────
+
     /**
-     * Writes FLAG_DELETED into the serialized TL buffer in SQLite so the mark
-     * survives app restarts. Runs on a background thread.
+     * Read the flags int from a raw TLRPC$Message object.
+     * Uses AutomationResolver so it works on NagramX ("k") and Official ("flags").
      */
-    private static void persistDeletedFlag(MessagesStorage ms, long dialogId, ArrayList<Integer> ids) {
+    private static int rawFlags(Object rawMsg) {
+        String field = AutomationResolver.resolve(
+                "TLRPC$Message", "flags", AutomationResolver.ResolverType.Field);
+        return XposedHelpers.getIntField(rawMsg, field);
+    }
+
+    /**
+     * Write the flags int into a raw TLRPC$Message object.
+     */
+    private static void rawSetFlags(Object rawMsg, int flags) {
+        String field = AutomationResolver.resolve(
+                "TLRPC$Message", "flags", AutomationResolver.ResolverType.Field);
+        XposedHelpers.setIntField(rawMsg, field, flags);
+    }
+
+    /**
+     * Read the id int from a raw TLRPC$Message object.
+     * Uses AutomationResolver so it works on NagramX ("a") and Official ("id").
+     */
+    private static int rawId(Object rawMsg) {
+        String field = AutomationResolver.resolve(
+                "TLRPC$Message", "id", AutomationResolver.ResolverType.Field);
+        return XposedHelpers.getIntField(rawMsg, field);
+    }
+
+    // ── DB persistence ───────────────────────────────────────────────────────
+
+    /**
+     * Writes FLAG_DELETED into the serialised TL buffer stored in SQLite
+     * so the mark survives app restarts.
+     * flags are at byte-offset 4 in every TL_message serialisation.
+     */
+    private static void persistDeletedFlag(MessagesStorage ms,
+                                           long dialogId,
+                                           ArrayList<Integer> ids) {
         try {
             dbHandler.post(() -> {
                 try {
@@ -109,14 +139,13 @@ public class DontWipeMessages {
                         String update = "UPDATE " + table + " SET data = ? WHERE uid = ? AND mid = ?";
 
                         SQLiteCursor cursor = db.queryFinalized(query, new Object[]{});
-                        SQLitePreparedStatement state  = db.executeFast(update);
+                        SQLitePreparedStatement state = db.executeFast(update);
 
                         while (cursor.next()) {
                             NativeByteBuffer data = cursor.byteBufferValue(0);
                             int  mid = cursor.intValue(1);
                             long uid = cursor.longValue(2);
 
-                            // flags is at byte offset 4 in the TL message serialization
                             data.position(4);
                             int flags = (int) data.readInt32(true);
                             flags |= FLAG_DELETED;
@@ -143,9 +172,7 @@ public class DontWipeMessages {
         }
     }
 
-    // ══════════════════════════════════════════════════════════════
-    //  ENTRY POINT — called from ConfigManager
-    // ══════════════════════════════════════════════════════════════
+    // ── entry point ──────────────────────────────────────────────────────────
 
     public static void init() {
         try {
@@ -159,22 +186,25 @@ public class DontWipeMessages {
         }
     }
 
-    // ══════════════════════════════════════════════════════════════
-    //  HOOK 1 — intercept deletion updates from server
-    //  Catches TL_updateDeleteMessages + TL_updateDeleteChannelMessages
-    //  Sets FLAG_DELETED on in-memory objects AND persists to SQLite
-    //  Also adds to deletedIds set for reliable UI detection
-    // ══════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════════
+    //  HOOK 1 — intercept delete updates coming from the server
+    //
+    //  Key fix:  flags / id are read via rawFlags() / rawId() which use
+    //  AutomationResolver, so they work on NagramX where the fields are
+    //  renamed to "k" / "a".
+    //
+    //  Also prepends "✕ " to the message text as a guaranteed visual mark
+    //  (Layer A).  This is client-independent and needs no ChatMessageCell.
+    // ════════════════════════════════════════════════════════════════════════
 
     private static void hookDeletionEvents() {
         try {
             Class<?> mcClass = ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER);
             if (mcClass == null) return;
 
-            // processUpdateArray: ArrayList, ArrayList, ArrayList, boolean, int
-            Method[] methods = mcClass.getDeclaredMethods();
+            // find processUpdateArray: (ArrayList,ArrayList,ArrayList,boolean,int)
             List<String> found = new ArrayList<>();
-            for (Method m : methods)
+            for (Method m : mcClass.getDeclaredMethods())
                 if (m.getParameterCount() == 5
                         && m.getParameterTypes()[0] == ArrayList.class
                         && m.getParameterTypes()[1] == ArrayList.class
@@ -200,7 +230,6 @@ public class DontWipeMessages {
                                 if (updates == null || updates.isEmpty()) return;
 
                                 ArrayList<Object> keep = new ArrayList<>();
-
                                 for (Object item : updates) {
                                     Class<?> cls = item.getClass();
                                     boolean isCh = cls.equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_CHANNEL_MESSAGES));
@@ -211,17 +240,12 @@ public class DontWipeMessages {
                                                 new TLRPC.TL_updateDeleteChannelMessages(item);
                                         long dialogId = -upd.getChannelID();
 
-                                        // flag in-memory objects
+                                        // mark in-memory objects
                                         LongSparseArray map = mc.getDialogMessage();
                                         ArrayList<Object> live = map.get(dialogId);
                                         if (live != null)
-                                            for (Object o : live) {
-                                                TLRPC.Message owner = new MessageObject(o).getMessageOwner();
-                                                if (upd.getMessages().contains(owner.getID())) {
-                                                    owner.setFlags(owner.getFlags() | FLAG_DELETED);
-                                                    deletedIds.add(owner.getID()); // reliable session marker
-                                                }
-                                            }
+                                            for (Object o : live)
+                                                markDeleted(o, upd.getMessages());
 
                                         for (int id : upd.getMessages()) deletedIds.add(id);
                                         persistDeletedFlag(mc.getMessagesStorage(), dialogId, upd.getMessages());
@@ -229,19 +253,13 @@ public class DontWipeMessages {
                                     } else if (isDi) {
                                         TLRPC.TL_updateDeleteMessages upd =
                                                 new TLRPC.TL_updateDeleteMessages(item);
-
                                         SparseArray<Object> byId = mc.getDialogMessagesByIds();
                                         for (int id : upd.getMessages()) {
                                             Object o = byId.get(id);
-                                            if (o != null) {
-                                                TLRPC.Message owner = new MessageObject(o).getMessageOwner();
-                                                owner.setFlags(owner.getFlags() | FLAG_DELETED);
-                                            }
+                                            if (o != null) markDeleted(o, null);
                                             deletedIds.add(id);
                                         }
-
                                         persistDeletedFlag(mc.getMessagesStorage(), 0, upd.getMessages());
-
                                     } else {
                                         keep.add(item);
                                     }
@@ -258,10 +276,49 @@ public class DontWipeMessages {
         }
     }
 
-    // ══════════════════════════════════════════════════════════════
+    /**
+     * Sets FLAG_DELETED on a MessageObject wrapper and prepends "✕ " to the
+     * message text so the mark is immediately visible (Layer A).
+     *
+     * @param msgObj  raw Telegram MessageObject (the wrapper)
+     * @param filter  if non-null, only mark if rawId is in this list
+     */
+    private static void markDeleted(Object msgObj, ArrayList<Integer> filter) {
+        try {
+            Object rawMsg = new MessageObject(msgObj).getMessageOwner().message;
+            if (rawMsg == null) return;
+
+            int id = 0;
+            try { id = rawId(rawMsg); } catch (Throwable ignored) {}
+            if (filter != null && !filter.contains(id)) return;
+
+            // set FLAG_DELETED bit
+            try {
+                int currentFlags = rawFlags(rawMsg);
+                rawSetFlags(rawMsg, currentFlags | FLAG_DELETED);
+            } catch (Throwable e) {
+                Logger.e(e);
+            }
+
+            // remember for this session
+            if (id != 0) deletedIds.add(id);
+
+            // prepend "✕ " to message text — Layer A (guaranteed visual mark)
+            try {
+                String text = (String) XposedHelpers.getObjectField(rawMsg, "message");
+                if (text != null && !text.startsWith("✕ ")) {
+                    XposedHelpers.setObjectField(rawMsg, "message", "✕ " + text);
+                }
+            } catch (Throwable ignored) {}
+
+        } catch (Throwable e) {
+            Logger.e(e);
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
     //  HOOK 2 — block MessagesStorage.markMessagesAsDeleted(...)
-    //  Prevents Telegram removing the message from SQLite
-    // ══════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════════
 
     private static void hookBlockDbDeletion() {
         try {
@@ -286,17 +343,14 @@ public class DontWipeMessages {
         }
     }
 
-    // ══════════════════════════════════════════════════════════════
-    //  HOOK 3 — own-delete passthrough
-    //  Sets isMyOwnDelete=true before user's own deleteMessages call
-    //  Silences the messagesDeleted broadcast for others' deletions
-    // ══════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════════
+    //  HOOK 3 — own-delete passthrough + silence messagesDeleted broadcast
+    // ════════════════════════════════════════════════════════════════════════
 
     private static void hookOwnDeletePassthrough() {
         try {
             if (ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER) == null) return;
 
-            // mark own-delete start
             HMethod.hookMethod(
                     ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER),
                     AutomationResolver.resolve("MessagesController", "deleteMessages",
@@ -315,7 +369,6 @@ public class DontWipeMessages {
                                 }
                             }));
 
-            // silence messagesDeleted broadcast for others' deletions
             HMethod.hookMethod(
                     ClassLoad.getClass(ClassNames.NOTIFICATION_CENTER),
                     AutomationResolver.resolve("NotificationCenter", "postNotificationName",
@@ -338,7 +391,6 @@ public class DontWipeMessages {
                                 }
                             }));
 
-            // block push notification removal
             if (ClassLoad.getClass(ClassNames.NOTIFICATIONS_CONTROLLER) != null)
                 for (Method m : ClassLoad.getClass(ClassNames.NOTIFICATIONS_CONTROLLER).getDeclaredMethods())
                     if (m.getName().equals(AutomationResolver.resolve("NotificationsController",
@@ -358,75 +410,67 @@ public class DontWipeMessages {
         }
     }
 
-    // ══════════════════════════════════════════════════════════════
-    //  HOOK 4 — UI: show "✕ Deleted" beside the timestamp
+    // ════════════════════════════════════════════════════════════════════════
+    //  HOOK 4 — timestamp mark via ChatMessageCell.measureTime  (Layer B)
     //
-    //  TWO-LAYER approach to find ChatMessageCell.measureTime:
+    //  Two-layer method discovery:
+    //   1. AutomationResolver name (NagramX: "h7", Official: "measureTime")
+    //   2. Reflection scan: any void method(MessageObject) in the cell class
     //
-    //  Layer 1 (static): AutomationResolver uses NagramX.java mappings
-    //    ChatMessageCell → "X50", measureTime → "h7" for NagramX
-    //    This covers the specific NagramX build Re-Telegram targets.
-    //
-    //  Layer 2 (dynamic): If Layer 1 fails (class null or method not found),
-    //    scan ALL methods of the cell class looking for:
-    //    void method(MessageObject) — which is measureTime's signature
-    //
-    //  DELETED detection uses deletedIds set (session) OR FLAG_DELETED bit (DB)
-    //
-    //  currentTimeString: works for both Official (CharSequence) and NagramX
-    //  (SpannableStringBuilder) — detected at runtime via instanceof
-    // ══════════════════════════════════════════════════════════════
+    //  Deleted detection uses rawFlags() + rawId() so NagramX obfuscation
+    //  is handled correctly.
+    // ════════════════════════════════════════════════════════════════════════
 
     private static void hookUI() {
         try {
             Class<?> cellClass = ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL);
             if (cellClass == null) {
-                Logger.w("DontWipeMessages: ChatMessageCell class not found — check NagramX mappings");
+                Logger.w("DontWipeMessages: ChatMessageCell not found — timestamp mark unavailable (text mark active)");
                 return;
             }
 
             Class<?> msgClass = ClassLoad.getClass(ClassNames.MESSAGE_OBJECT);
-            String resolvedName = AutomationResolver.resolve("ChatMessageCell", "measureTime",
-                    AutomationResolver.ResolverType.Method);
+            String resolvedName = AutomationResolver.resolve(
+                    "ChatMessageCell", "measureTime", AutomationResolver.ResolverType.Method);
 
-            // Layer 1: try by resolved name
             Method target = null;
+
+            // Layer 1: exact match by resolved name + parameter type
             try {
-                target = cellClass.getDeclaredMethod(resolvedName, msgClass);
-                Logger.w("DontWipeMessages: measureTime found as '" + resolvedName + "'");
-            } catch (NoSuchMethodException ignored) {
-                // Layer 2: scan all void methods taking a single MessageObject param
-                Logger.w("DontWipeMessages: measureTime not found as '" + resolvedName + "' — scanning by signature");
-                for (Method m : cellClass.getDeclaredMethods()) {
-                    if (m.getReturnType() == void.class
-                            && m.getParameterCount() == 1
-                            && m.getParameterTypes()[0] == msgClass) {
+                if (msgClass != null) {
+                    target = cellClass.getDeclaredMethod(resolvedName, msgClass);
+                } else {
+                    // msgClass unknown — find by name + single-param
+                    for (Method m : cellClass.getDeclaredMethods())
+                        if (m.getName().equals(resolvedName) && m.getParameterCount() == 1) {
+                            target = m; break;
+                        }
+                }
+            } catch (NoSuchMethodException ignored) {}
+
+            // Layer 2: scan by signature
+            if (target == null) {
+                Logger.w("DontWipeMessages: measureTime '" + resolvedName + "' not found, scanning…");
+                for (Class<?> c : new Class<?>[]{cellClass,
+                        cellClass.getSuperclass() != null ? cellClass.getSuperclass() : cellClass}) {
+                    if (c == null) continue;
+                    for (Method m : c.getDeclaredMethods()) {
+                        if (m.getReturnType() != void.class || m.getParameterCount() != 1) continue;
+                        if (msgClass != null && m.getParameterTypes()[0] != msgClass) continue;
                         target = m;
-                        Logger.w("DontWipeMessages: found measureTime candidate: " + m.getName());
+                        Logger.w("DontWipeMessages: measureTime fallback found: " + m.getName());
                         break;
                     }
-                }
-                // Layer 2b: try superclass if not found in declared class
-                if (target == null && cellClass.getSuperclass() != null) {
-                    for (Method m : cellClass.getSuperclass().getDeclaredMethods()) {
-                        if (m.getReturnType() == void.class
-                                && m.getParameterCount() == 1
-                                && m.getParameterTypes()[0] == msgClass) {
-                            target = m;
-                            Logger.w("DontWipeMessages: found measureTime in superclass: " + m.getName());
-                            break;
-                        }
-                    }
+                    if (target != null) break;
                 }
             }
 
             if (target == null) {
-                Logger.w("DontWipeMessages: cannot find measureTime — deleted mark will not show");
+                Logger.w("DontWipeMessages: measureTime not found — timestamp mark unavailable");
                 return;
             }
 
-            final Method finalTarget = target;
-            HMethod.hookMethod(finalTarget, new AbstractMethodHook() {
+            HMethod.hookMethod(target, new AbstractMethodHook() {
                 @Override
                 protected void afterMethod(MethodHookParam param) {
                     try {
@@ -436,59 +480,62 @@ public class DontWipeMessages {
                         if (msgArg == null) return;
 
                         TLRPC.Message owner = new MessageObject(msgArg).getMessageOwner();
-                        if (owner == null) return;
+                        if (owner == null || owner.message == null) return;
 
-                        // Check BOTH sources: in-memory session set AND persisted flag bit
-                        int msgId = owner.getID();
-                        boolean bySet   = deletedIds.contains(msgId);
-                        boolean byFlag  = false;
-                        try { byFlag = (owner.getFlags() & FLAG_DELETED) != 0; } catch (Throwable ignored) {}
+                        // check deleted — uses obfuscation-safe helpers
+                        int msgId = 0;
+                        try { msgId = rawId(owner.message); } catch (Throwable ignored) {}
+
+                        boolean bySet  = msgId != 0 && deletedIds.contains(msgId);
+                        boolean byFlag = false;
+                        try { byFlag = (rawFlags(owner.message) & FLAG_DELETED) != 0; }
+                        catch (Throwable ignored) {}
 
                         if (!bySet && !byFlag) return;
 
-                        // ── build "✕ Deleted" label ──────────────────────
+                        // build "✕ Deleted" spannable
                         String labelText = "✕ " + Translator.get(Keys.DontWipeMessages);
                         SpannableStringBuilder label = new SpannableStringBuilder(labelText + " ");
                         label.setSpan(new ForegroundColorSpan(Color.rgb(220, 50, 50)),
                                 0, labelText.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
 
-                        // ── read currentTimeString — two field name attempts ──
-                        String resolvedField = AutomationResolver.resolve("ChatMessageCell",
-                                "currentTimeString", AutomationResolver.ResolverType.Field);
+                        // read currentTimeString — try resolved name, then literal
+                        String timeField = AutomationResolver.resolve(
+                                "ChatMessageCell", "currentTimeString",
+                                AutomationResolver.ResolverType.Field);
                         Object rawTime = null;
+                        String usedField = timeField;
                         try {
-                            rawTime = XposedHelpers.getObjectField(param.thisObject, resolvedField);
+                            rawTime = XposedHelpers.getObjectField(param.thisObject, timeField);
                         } catch (Throwable e1) {
                             try {
                                 rawTime = XposedHelpers.getObjectField(param.thisObject, "currentTimeString");
-                                resolvedField = "currentTimeString";
+                                usedField = "currentTimeString";
                             } catch (Throwable e2) {
                                 Logger.w("DontWipeMessages: currentTimeString not accessible");
                                 return;
                             }
                         }
 
-                        // ── prepend label — handles both String and SpannableStringBuilder ──
+                        // prepend label
                         SpannableStringBuilder newTime;
                         if (rawTime instanceof SpannableStringBuilder) {
-                            // NagramX / Nekogram: SpannableStringBuilder
                             newTime = new SpannableStringBuilder(label).append((SpannableStringBuilder) rawTime);
                         } else {
-                            // Official Telegram: String / CharSequence
                             newTime = new SpannableStringBuilder(label)
                                     .append(rawTime != null ? rawTime.toString() : "");
                         }
+                        XposedHelpers.setObjectField(param.thisObject, usedField, newTime);
 
-                        // ── write back ───────────────────────────────────
-                        XposedHelpers.setObjectField(param.thisObject, resolvedField, newTime);
-
-                        // ── widen the cell so text doesn't clip ──────────
+                        // widen the cell so text doesn't clip
                         TextPaint paint = Theme.getTextPaint();
                         if (paint != null) {
-                            ChatMessageCellDefault cell = new ChatMessageCellDefault(param.thisObject) {};
-                            int extra = (int) Math.ceil(paint.measureText(label, 0, label.length()));
-                            cell.setTimeTextWidth(cell.getTimeTextWidth() + extra);
-                            cell.setTimeWidth(cell.getTimeWidth() + extra);
+                            try {
+                                ChatMessageCellDefault cell = new ChatMessageCellDefault(param.thisObject) {};
+                                int extra = (int) Math.ceil(paint.measureText(label, 0, label.length()));
+                                cell.setTimeTextWidth(cell.getTimeTextWidth() + extra);
+                                cell.setTimeWidth(cell.getTimeWidth() + extra);
+                            } catch (Throwable ignored) {}
                         }
 
                     } catch (Throwable e) {
@@ -502,9 +549,9 @@ public class DontWipeMessages {
         }
     }
 
-    // ══════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════════
     //  HOOK 5 — stop auto-download for deleted media
-    // ══════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════════
 
     private static void hookAutoDownload() {
         try {
@@ -519,9 +566,12 @@ public class DontWipeMessages {
                         @Override
                         protected void beforeMethod(MethodHookParam param) {
                             try {
-                                TLRPC.Message msg = new TLRPC.Message(param.args[0]);
-                                boolean deleted = deletedIds.contains(msg.getID());
-                                try { deleted = deleted || (msg.getFlags() & FLAG_DELETED) != 0; } catch (Throwable ignored) {}
+                                Object rawMsg = param.args[0];
+                                int id = 0;
+                                try { id = rawId(rawMsg); } catch (Throwable ignored) {}
+                                boolean deleted = id != 0 && deletedIds.contains(id);
+                                try { deleted = deleted || (rawFlags(rawMsg) & FLAG_DELETED) != 0; }
+                                catch (Throwable ignored) {}
                                 if (deleted) param.setResult(0);
                             } catch (Throwable e) {
                                 Logger.e(e);
@@ -533,9 +583,7 @@ public class DontWipeMessages {
         }
     }
 
-    // ══════════════════════════════════════════════════════════════
-    //  HELPER
-    // ══════════════════════════════════════════════════════════════
+    // ── helper ───────────────────────────────────────────────────────────────
 
     private static boolean isEnabled() {
         return ConfigManager.dontWipeMessages != null
