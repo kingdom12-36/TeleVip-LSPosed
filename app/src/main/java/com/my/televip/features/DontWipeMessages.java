@@ -11,9 +11,6 @@ import android.text.TextPaint;
 import android.text.TextUtils;
 import android.text.style.ForegroundColorSpan;
 import android.util.SparseArray;
-import android.view.View;
-import android.graphics.Canvas;
-import android.graphics.Rect; // تم إضافته للحصول على أبعاد الفقاعة
 
 import com.my.televip.Class.ClassLoad;
 import com.my.televip.Class.ClassNames;
@@ -40,17 +37,51 @@ import com.my.televip.virtuals.tgnet.TLRPC;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import de.robv.android.xposed.XposedHelpers;
 
 /**
- * DontWipeMessages — single-file feature
+ * DontWipeMessages — single-file feature (all logic here, nothing else needed)
+ *
+ * Works on both Official Telegram AND NagramX/Nekogram.
+ * NagramX obfuscation is handled via two layers:
+ *   1. NagramX.java static mappings (class/method/field names)
+ *   2. Dynamic reflection fallback in hookUI() — finds measureTime by signature
+ *
+ * ┌─ Hook 1: hookDeletionEvents()        intercepts delete updates from server
+ * ├─ Hook 2: hookBlockDbDeletion()       blocks SQLite deletion
+ * ├─ Hook 3: hookOwnDeletePassthrough()  lets user delete their own messages normally
+ * ├─ Hook 4: hookUI()                    shows ✕ label next to timestamp
+ * └─ Hook 5: hookAutoDownload()          stops auto-download of deleted media
  */
 public class DontWipeMessages {
 
+    // ══════════════════════════════════════════════════════════════
+    //  CONSTANTS
+    // ══════════════════════════════════════════════════════════════
+
+    /** Written into TLRPC.Message.flags to mark a message as deleted-by-other */
     public static final int FLAG_DELETED = 1 << 31;
+
+    /** Set when THE LOCAL USER is deleting — lets hooks 2 & 3 pass through */
     private static boolean isMyOwnDelete = false;
+
+    /**
+     * In-memory set of deleted message IDs for the current session.
+     * Needed because in NagramX the flags field may be obfuscated and
+     * reading getFlags() might not return FLAG_DELETED reliably.
+     * This set is authoritative for messages deleted during this session.
+     */
+    private static final Set<Integer> deletedIds =
+            Collections.newSetFromMap(new ConcurrentHashMap<>());
+
+    // ══════════════════════════════════════════════════════════════
+    //  INLINE DB HANDLER  (no external dependency)
+    // ══════════════════════════════════════════════════════════════
 
     private static final Handler dbHandler = new Handler(makeDbLooper());
 
@@ -60,27 +91,32 @@ public class DontWipeMessages {
         return t.getLooper();
     }
 
-    private static void persistDeletedFlag(MessagesStorage messagesStorage, long dialogId, ArrayList<Integer> delMsg) {
+    /**
+     * Writes FLAG_DELETED into the serialized TL buffer in SQLite so the mark
+     * survives app restarts. Runs on a background thread.
+     */
+    private static void persistDeletedFlag(MessagesStorage ms, long dialogId, ArrayList<Integer> ids) {
         try {
             dbHandler.post(() -> {
                 try {
-                    SQLiteDatabase db = messagesStorage.getDatabase();
+                    SQLiteDatabase db = ms.getDatabase();
                     for (int t = 0; t < 2; t++) {
                         String table  = (t == 0) ? "messages_v2" : "messages_topics";
                         String query  = "SELECT data,mid,uid FROM " + table
                                 + " WHERE " + (dialogId == 0 ? "is_channel" : "uid")
                                 + " = " + dialogId
-                                + " AND mid IN (" + TextUtils.join(",", delMsg) + ");";
+                                + " AND mid IN (" + TextUtils.join(",", ids) + ");";
                         String update = "UPDATE " + table + " SET data = ? WHERE uid = ? AND mid = ?";
 
                         SQLiteCursor cursor = db.queryFinalized(query, new Object[]{});
-                        SQLitePreparedStatement state = db.executeFast(update);
+                        SQLitePreparedStatement state  = db.executeFast(update);
 
                         while (cursor.next()) {
                             NativeByteBuffer data = cursor.byteBufferValue(0);
                             int  mid = cursor.intValue(1);
                             long uid = cursor.longValue(2);
 
+                            // flags is at byte offset 4 in the TL message serialization
                             data.position(4);
                             int flags = (int) data.readInt32(true);
                             flags |= FLAG_DELETED;
@@ -107,24 +143,36 @@ public class DontWipeMessages {
         }
     }
 
+    // ══════════════════════════════════════════════════════════════
+    //  ENTRY POINT — called from ConfigManager
+    // ══════════════════════════════════════════════════════════════
+
     public static void init() {
         try {
             hookDeletionEvents();
             hookBlockDbDeletion();
             hookOwnDeletePassthrough();
             hookUI();
-            hookUIBackground(); 
             hookAutoDownload();
         } catch (Throwable e) {
             Logger.e(e);
         }
     }
 
+    // ══════════════════════════════════════════════════════════════
+    //  HOOK 1 — intercept deletion updates from server
+    //  Catches TL_updateDeleteMessages + TL_updateDeleteChannelMessages
+    //  Sets FLAG_DELETED on in-memory objects AND persists to SQLite
+    //  Also adds to deletedIds set for reliable UI detection
+    // ══════════════════════════════════════════════════════════════
+
     private static void hookDeletionEvents() {
         try {
-            if (ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER) == null) return;
+            Class<?> mcClass = ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER);
+            if (mcClass == null) return;
 
-            Method[] methods = ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER).getDeclaredMethods();
+            // processUpdateArray: ArrayList, ArrayList, ArrayList, boolean, int
+            Method[] methods = mcClass.getDeclaredMethods();
             List<String> found = new ArrayList<>();
             for (Method m : methods)
                 if (m.getParameterCount() == 5
@@ -136,20 +184,17 @@ public class DontWipeMessages {
                     found.add(m.getName());
 
             if (found.size() != 1) {
-                Logger.w("DontWipeMessages: processUpdateArray candidates=" + found.size());
+                Logger.w("DontWipeMessages: processUpdateArray candidates=" + found.size() + " " + Utils.issue);
                 return;
             }
 
-            HMethod.hookMethod(
-                    ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER),
-                    found.get(0),
+            HMethod.hookMethod(mcClass, found.get(0),
                     ArrayList.class, ArrayList.class, ArrayList.class, boolean.class, int.class,
                     new AbstractMethodHook() {
                         @Override
                         protected void beforeMethod(MethodHookParam param) {
                             try {
                                 if (!isEnabled()) return;
-
                                 MessagesController mc = new MessagesController(param.thisObject);
                                 List<Object> updates = Utils.castList(param.args[0], Object.class);
                                 if (updates == null || updates.isEmpty()) return;
@@ -157,28 +202,31 @@ public class DontWipeMessages {
                                 ArrayList<Object> keep = new ArrayList<>();
 
                                 for (Object item : updates) {
-                                    boolean isChannel = item.getClass().equals(
-                                            ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_CHANNEL_MESSAGES));
-                                    boolean isDirect  = item.getClass().equals(
-                                            ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_MESSAGES));
+                                    Class<?> cls = item.getClass();
+                                    boolean isCh = cls.equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_CHANNEL_MESSAGES));
+                                    boolean isDi = cls.equals(ClassLoad.getClass(ClassNames.TL_UPDATE_DELETE_MESSAGES));
 
-                                    if (isChannel) {
+                                    if (isCh) {
                                         TLRPC.TL_updateDeleteChannelMessages upd =
                                                 new TLRPC.TL_updateDeleteChannelMessages(item);
                                         long dialogId = -upd.getChannelID();
 
-                                        LongSparseArray dialogMsg = mc.getDialogMessage();
-                                        ArrayList<Object> live = dialogMsg.get(dialogId);
+                                        // flag in-memory objects
+                                        LongSparseArray map = mc.getDialogMessage();
+                                        ArrayList<Object> live = map.get(dialogId);
                                         if (live != null)
                                             for (Object o : live) {
                                                 TLRPC.Message owner = new MessageObject(o).getMessageOwner();
-                                                if (upd.getMessages().contains(owner.getID()))
+                                                if (upd.getMessages().contains(owner.getID())) {
                                                     owner.setFlags(owner.getFlags() | FLAG_DELETED);
+                                                    deletedIds.add(owner.getID()); // reliable session marker
+                                                }
                                             }
 
+                                        for (int id : upd.getMessages()) deletedIds.add(id);
                                         persistDeletedFlag(mc.getMessagesStorage(), dialogId, upd.getMessages());
 
-                                    } else if (isDirect) {
+                                    } else if (isDi) {
                                         TLRPC.TL_updateDeleteMessages upd =
                                                 new TLRPC.TL_updateDeleteMessages(item);
 
@@ -189,6 +237,7 @@ public class DontWipeMessages {
                                                 TLRPC.Message owner = new MessageObject(o).getMessageOwner();
                                                 owner.setFlags(owner.getFlags() | FLAG_DELETED);
                                             }
+                                            deletedIds.add(id);
                                         }
 
                                         persistDeletedFlag(mc.getMessagesStorage(), 0, upd.getMessages());
@@ -197,7 +246,6 @@ public class DontWipeMessages {
                                         keep.add(item);
                                     }
                                 }
-
                                 param.args[0] = keep;
 
                             } catch (Throwable e) {
@@ -209,6 +257,11 @@ public class DontWipeMessages {
             Logger.e(e);
         }
     }
+
+    // ══════════════════════════════════════════════════════════════
+    //  HOOK 2 — block MessagesStorage.markMessagesAsDeleted(...)
+    //  Prevents Telegram removing the message from SQLite
+    // ══════════════════════════════════════════════════════════════
 
     private static void hookBlockDbDeletion() {
         try {
@@ -225,20 +278,25 @@ public class DontWipeMessages {
                             new AbstractMethodHook() {
                                 @Override
                                 protected void beforeMethod(MethodHookParam param) {
-                                    if (isEnabled() && !isMyOwnDelete)
-                                        param.setResult(null);
+                                    if (isEnabled() && !isMyOwnDelete) param.setResult(null);
                                 }
-                            }
-                    ));
+                            }));
         } catch (Throwable e) {
             Logger.e(e);
         }
     }
 
+    // ══════════════════════════════════════════════════════════════
+    //  HOOK 3 — own-delete passthrough
+    //  Sets isMyOwnDelete=true before user's own deleteMessages call
+    //  Silences the messagesDeleted broadcast for others' deletions
+    // ══════════════════════════════════════════════════════════════
+
     private static void hookOwnDeletePassthrough() {
         try {
             if (ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER) == null) return;
 
+            // mark own-delete start
             HMethod.hookMethod(
                     ClassLoad.getClass(ClassNames.MESSAGES_CONTROLLER),
                     AutomationResolver.resolve("MessagesController", "deleteMessages",
@@ -255,9 +313,9 @@ public class DontWipeMessages {
                                 protected void beforeMethod(MethodHookParam param) {
                                     isMyOwnDelete = true;
                                 }
-                            }
-                    ));
+                            }));
 
+            // silence messagesDeleted broadcast for others' deletions
             HMethod.hookMethod(
                     ClassLoad.getClass(ClassNames.NOTIFICATION_CENTER),
                     AutomationResolver.resolve("NotificationCenter", "postNotificationName",
@@ -278,9 +336,9 @@ public class DontWipeMessages {
                                 protected void afterMethod(MethodHookParam param) {
                                     isMyOwnDelete = false;
                                 }
-                            }
-                    ));
+                            }));
 
+            // block push notification removal
             if (ClassLoad.getClass(ClassNames.NOTIFICATIONS_CONTROLLER) != null)
                 for (Method m : ClassLoad.getClass(ClassNames.NOTIFICATIONS_CONTROLLER).getDeclaredMethods())
                     if (m.getName().equals(AutomationResolver.resolve("NotificationsController",
@@ -300,83 +358,153 @@ public class DontWipeMessages {
         }
     }
 
+    // ══════════════════════════════════════════════════════════════
+    //  HOOK 4 — UI: show "✕ Deleted" beside the timestamp
+    //
+    //  TWO-LAYER approach to find ChatMessageCell.measureTime:
+    //
+    //  Layer 1 (static): AutomationResolver uses NagramX.java mappings
+    //    ChatMessageCell → "X50", measureTime → "h7" for NagramX
+    //    This covers the specific NagramX build Re-Telegram targets.
+    //
+    //  Layer 2 (dynamic): If Layer 1 fails (class null or method not found),
+    //    scan ALL methods of the cell class looking for:
+    //    void method(MessageObject) — which is measureTime's signature
+    //
+    //  DELETED detection uses deletedIds set (session) OR FLAG_DELETED bit (DB)
+    //
+    //  currentTimeString: works for both Official (CharSequence) and NagramX
+    //  (SpannableStringBuilder) — detected at runtime via instanceof
+    // ══════════════════════════════════════════════════════════════
+
     private static void hookUI() {
         try {
-            if (ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL) == null) return;
+            Class<?> cellClass = ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL);
+            if (cellClass == null) {
+                Logger.w("DontWipeMessages: ChatMessageCell class not found — check NagramX mappings");
+                return;
+            }
 
-            HMethod.hookMethod(
-                    ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL),
-                    AutomationResolver.resolve("ChatMessageCell", "measureTime",
-                            AutomationResolver.ResolverType.Method),
-                    AutomationResolver.merge(
-                            AutomationResolver.resolveObject("measureTime",
-                                    new Class[]{ClassLoad.getClass(ClassNames.MESSAGE_OBJECT)}),
-                            new AbstractMethodHook() {
-                                @Override
-                                protected void afterMethod(MethodHookParam param) {
-                                    try {
-                                        if (!isEnabled()) return;
+            Class<?> msgClass = ClassLoad.getClass(ClassNames.MESSAGE_OBJECT);
+            String resolvedName = AutomationResolver.resolve("ChatMessageCell", "measureTime",
+                    AutomationResolver.ResolverType.Method);
 
-                                        Object msgArg = param.args[0];
-                                        if (msgArg == null) return;
+            // Layer 1: try by resolved name
+            Method target = null;
+            try {
+                target = cellClass.getDeclaredMethod(resolvedName, msgClass);
+                Logger.d("DontWipeMessages: measureTime found as '" + resolvedName + "'");
+            } catch (NoSuchMethodException ignored) {
+                // Layer 2: scan all void methods taking a single MessageObject param
+                Logger.w("DontWipeMessages: measureTime not found as '" + resolvedName + "' — scanning by signature");
+                for (Method m : cellClass.getDeclaredMethods()) {
+                    if (m.getReturnType() == void.class
+                            && m.getParameterCount() == 1
+                            && m.getParameterTypes()[0] == msgClass) {
+                        target = m;
+                        Logger.d("DontWipeMessages: found measureTime candidate: " + m.getName());
+                        break;
+                    }
+                }
+                // Layer 2b: try superclass if not found in declared class
+                if (target == null && cellClass.getSuperclass() != null) {
+                    for (Method m : cellClass.getSuperclass().getDeclaredMethods()) {
+                        if (m.getReturnType() == void.class
+                                && m.getParameterCount() == 1
+                                && m.getParameterTypes()[0] == msgClass) {
+                            target = m;
+                            Logger.d("DontWipeMessages: found measureTime in superclass: " + m.getName());
+                            break;
+                        }
+                    }
+                }
+            }
 
-                                        TLRPC.Message owner = new MessageObject(msgArg).getMessageOwner();
-                                        if (owner == null) return;
-                                        if ((owner.getFlags() & FLAG_DELETED) == 0) return;
+            if (target == null) {
+                Logger.w("DontWipeMessages: cannot find measureTime — deleted mark will not show");
+                return;
+            }
 
-                                        String labelText = "✕ " + Translator.get(Keys.DontWipeMessages);
-                                        SpannableStringBuilder label = new SpannableStringBuilder(labelText + " ");
-                                        label.setSpan(
-                                                new ForegroundColorSpan(Color.rgb(220, 50, 50)),
-                                                0, labelText.length(),
-                                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            final Method finalTarget = target;
+            HMethod.hookMethod(finalTarget, new AbstractMethodHook() {
+                @Override
+                protected void afterMethod(MethodHookParam param) {
+                    try {
+                        if (!isEnabled()) return;
 
-                                        String resolvedField = AutomationResolver.resolve(
-                                                "ChatMessageCell", "currentTimeString",
-                                                AutomationResolver.ResolverType.Field);
+                        Object msgArg = param.args[0];
+                        if (msgArg == null) return;
 
-                                        Object rawTime = null;
-                                        try {
-                                            rawTime = XposedHelpers.getObjectField(param.thisObject, resolvedField);
-                                        } catch (Throwable ignored) {
-                                            try {
-                                                rawTime = XposedHelpers.getObjectField(param.thisObject, "currentTimeString");
-                                                resolvedField = "currentTimeString";
-                                            } catch (Throwable e2) {
-                                                Logger.e(e2);
-                                                return;
-                                            }
-                                        }
+                        TLRPC.Message owner = new MessageObject(msgArg).getMessageOwner();
+                        if (owner == null) return;
 
-                                        SpannableStringBuilder newTime;
-                                        if (rawTime instanceof SpannableStringBuilder) {
-                                            newTime = new SpannableStringBuilder(label)
-                                                    .append((SpannableStringBuilder) rawTime);
-                                        } else {
-                                            newTime = new SpannableStringBuilder(label)
-                                                    .append(rawTime != null ? rawTime.toString() : "");
-                                        }
+                        // Check BOTH sources: in-memory session set AND persisted flag bit
+                        int msgId = owner.getID();
+                        boolean bySet   = deletedIds.contains(msgId);
+                        boolean byFlag  = false;
+                        try { byFlag = (owner.getFlags() & FLAG_DELETED) != 0; } catch (Throwable ignored) {}
 
-                                        XposedHelpers.setObjectField(param.thisObject, resolvedField, newTime);
+                        if (!bySet && !byFlag) return;
 
-                                        TextPaint paint = Theme.getTextPaint();
-                                        if (paint != null) {
-                                            ChatMessageCellDefault cell = new ChatMessageCellDefault(param.thisObject) {};
-                                            int extra = (int) Math.ceil(paint.measureText(label, 0, label.length()));
-                                            cell.setTimeTextWidth(cell.getTimeTextWidth() + extra);
-                                            cell.setTimeWidth(cell.getTimeWidth() + extra);
-                                        }
+                        // ── build "✕ Deleted" label ──────────────────────
+                        String labelText = "✕ " + Translator.get(Keys.DontWipeMessages);
+                        SpannableStringBuilder label = new SpannableStringBuilder(labelText + " ");
+                        label.setSpan(new ForegroundColorSpan(Color.rgb(220, 50, 50)),
+                                0, labelText.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
 
-                                    } catch (Throwable e) {
-                                        Logger.e(e);
-                                    }
-                                }
+                        // ── read currentTimeString — two field name attempts ──
+                        String resolvedField = AutomationResolver.resolve("ChatMessageCell",
+                                "currentTimeString", AutomationResolver.ResolverType.Field);
+                        Object rawTime = null;
+                        try {
+                            rawTime = XposedHelpers.getObjectField(param.thisObject, resolvedField);
+                        } catch (Throwable e1) {
+                            try {
+                                rawTime = XposedHelpers.getObjectField(param.thisObject, "currentTimeString");
+                                resolvedField = "currentTimeString";
+                            } catch (Throwable e2) {
+                                Logger.w("DontWipeMessages: currentTimeString not accessible");
+                                return;
                             }
-                    ));
+                        }
+
+                        // ── prepend label — handles both String and SpannableStringBuilder ──
+                        SpannableStringBuilder newTime;
+                        if (rawTime instanceof SpannableStringBuilder) {
+                            // NagramX / Nekogram: SpannableStringBuilder
+                            newTime = new SpannableStringBuilder(label).append((SpannableStringBuilder) rawTime);
+                        } else {
+                            // Official Telegram: String / CharSequence
+                            newTime = new SpannableStringBuilder(label)
+                                    .append(rawTime != null ? rawTime.toString() : "");
+                        }
+
+                        // ── write back ───────────────────────────────────
+                        XposedHelpers.setObjectField(param.thisObject, resolvedField, newTime);
+
+                        // ── widen the cell so text doesn't clip ──────────
+                        TextPaint paint = Theme.getTextPaint();
+                        if (paint != null) {
+                            ChatMessageCellDefault cell = new ChatMessageCellDefault(param.thisObject) {};
+                            int extra = (int) Math.ceil(paint.measureText(label, 0, label.length()));
+                            cell.setTimeTextWidth(cell.getTimeTextWidth() + extra);
+                            cell.setTimeWidth(cell.getTimeWidth() + extra);
+                        }
+
+                    } catch (Throwable e) {
+                        Logger.e(e);
+                    }
+                }
+            });
+
         } catch (Throwable e) {
             Logger.e(e);
         }
     }
+
+    // ══════════════════════════════════════════════════════════════
+    //  HOOK 5 — stop auto-download for deleted media
+    // ══════════════════════════════════════════════════════════════
 
     private static void hookAutoDownload() {
         try {
@@ -392,8 +520,9 @@ public class DontWipeMessages {
                         protected void beforeMethod(MethodHookParam param) {
                             try {
                                 TLRPC.Message msg = new TLRPC.Message(param.args[0]);
-                                if ((msg.getFlags() & FLAG_DELETED) != 0)
-                                    param.setResult(0);
+                                boolean deleted = deletedIds.contains(msg.getID());
+                                try { deleted = deleted || (msg.getFlags() & FLAG_DELETED) != 0; } catch (Throwable ignored) {}
+                                if (deleted) param.setResult(0);
                             } catch (Throwable e) {
                                 Logger.e(e);
                             }
@@ -405,88 +534,8 @@ public class DontWipeMessages {
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  🛠️ التطوير الجديد لدالة التلوين مع اللوجات المخصصة للـ Termux
+    //  HELPER
     // ══════════════════════════════════════════════════════════════
-    private static void hookUIBackground() {
-        try {
-            if (ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL) == null) return;
-
-            // نقوم بعمل الهوك بعد تنفيذ الدالة الأصلية (afterMethod) لضمان عدم قيام التيلجرام بالرسم فوق تعديلنا
-            HMethod.hookMethod(
-                    ClassLoad.getClass(ClassNames.CHAT_MESSAGE_CELL), "onDraw", Canvas.class,
-                    new AbstractMethodHook() {
-                        @Override
-                        protected void afterMethod(MethodHookParam param) {
-                            try {
-                                if (!isEnabled()) return;
-
-                                Canvas canvas = (Canvas) param.args[0];
-                                if (canvas == null) return;
-
-                                // محاولة جلب الـ MessageObject بأكثر من طريقة لضمان التوافق التام
-                                Object msgObj = null;
-                                try {
-                                    Method getMessageObject = param.thisObject.getClass().getMethod("getMessageObject");
-                                    msgObj = getMessageObject.invoke(param.thisObject);
-                                } catch (Throwable t) {
-                                    // طريقة بديلة عبر الفيلد المباشر إذا فشلت الميثود
-                                    try {
-                                        String msgObjField = AutomationResolver.resolve("ChatMessageCell", "currentMessageObject", AutomationResolver.ResolverType.Field);
-                                        msgObj = XposedHelpers.getObjectField(param.thisObject, msgObjField);
-                                    } catch (Throwable ignored) {}
-                                }
-
-                                if (msgObj == null) return;
-
-                                TLRPC.Message owner = new MessageObject(msgObj).getMessageOwner();
-                                if (owner == null) return;
-
-                                // فحص ما إذا كانت الرسالة تحمل علم الحذف
-                                if ((owner.getFlags() & FLAG_DELETED) != 0) {
-                                    
-                                    // ── [تيرمكس لوج 1]: تأكيد الدخول والدقة
-                                    android.util.Log.d("TeleVip-Termux", "╔════════════════════════════════════════╗");
-                                    android.util.Log.d("TeleVip-Termux", "║ [DETECTED] Deleted message onDraw! ID: " + owner.getID());
-
-                                    // جلب حقول أبعاد الخلفية من كود التيلجرام (مهمة جداً لمعرفة مكان الرسم)
-                                    int backgroundLeft = 0, backgroundRight = 0, backgroundTop = 0, backgroundBottom = 0;
-                                    try {
-                                        backgroundLeft = XposedHelpers.getIntField(param.thisObject, "backgroundLeft");
-                                        backgroundRight = XposedHelpers.getIntField(param.thisObject, "backgroundRight");
-                                        backgroundTop = XposedHelpers.getIntField(param.thisObject, "backgroundTop");
-                                        backgroundBottom = XposedHelpers.getIntField(param.thisObject, "backgroundBottom");
-                                        
-                                        // ── [تيرمكس لوج 2]: إرسال الأبعاد الدقيقة للفقاعة للتيرمكس
-                                        android.util.Log.d("TeleVip-Termux", "║ [BOUNDS] L:" + backgroundLeft + " R:" + backgroundRight + " T:" + backgroundTop + " B:" + backgroundBottom);
-                                    } catch (Throwable e) {
-                                        android.util.Log.d("TeleVip-Termux", "║ [BOUNDS] Failed to read background fields: " + e.getMessage());
-                                    }
-
-                                    // الرسم الفعلي: صبغ فقاعة الرسالة فقط بدلاً من كامل الشاشة لتفادي الاختفاء
-                                    if (backgroundRight > backgroundLeft && backgroundBottom > backgroundTop) {
-                                        android.graphics.Paint paint = new android.graphics.Paint();
-                                        paint.setColor(Color.argb(45, 255, 50, 50)); // لون أحمر شفاف خفيف
-                                        paint.setStyle(android.graphics.Paint.Style.FILL);
-                                        
-                                        // رسم المستطيل فوق فقاعة الرسالة تماماً
-                                        canvas.drawRect(backgroundLeft, backgroundTop, backgroundRight, backgroundBottom, paint);
-                                        android.util.Log.d("TeleVip-Termux", "║ [SUCCESS] Red overlay drawn successfully inside bounds.");
-                                    } else {
-                                        // إذا كانت الحقول مجهولة، نصبغ الـ View كخيار احتياطي
-                                        canvas.drawColor(Color.argb(35, 255, 80, 80));
-                                        android.util.Log.d("TeleVip-Termux", "║ [FALLBACK] Drawn full canvas color due to zero bounds.");
-                                    }
-                                    android.util.Log.d("TeleVip-Termux", "╚════════════════════════════════════════╝");
-                                }
-                            } catch (Throwable e) {
-                                android.util.Log.e("TeleVip-Termux", "Error inside hookUIBackground: ", e);
-                            }
-                        }
-                    });
-        } catch (Throwable e) {
-            Logger.e(e);
-        }
-    }
 
     private static boolean isEnabled() {
         return ConfigManager.dontWipeMessages != null
